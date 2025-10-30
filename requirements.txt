@@ -6,3 +6,5 @@ accelerate==1.1.1
 pydantic==2.9.2
 numpy==1.26.4
 gunicorn==21.2.0
+einops
+opt_einsum
