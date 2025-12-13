@@ -7,26 +7,71 @@ function getReactSource(element: HTMLElement) {
 
   // 1. Walk up the DOM tree until we find a node tracked by React
   while (currentElement) {
-    const key = Object.keys(currentElement).find((k) => k.startsWith("__reactFiber$"));
+    const keys = Object.keys(currentElement);
+    const fiberKey = keys.find((k) => k.startsWith("__reactFiber$"));
+    const internalKey = keys.find((k) => k.startsWith("__reactInternalInstance$"));
 
-    if (key) {
+    if (fiberKey) {
       // @ts-ignore
-      let fiber = currentElement[key];
+      let fiber = currentElement[fiberKey];
+      const originalFiber = fiber;
 
-      // 2. Once we have a Fiber, walk up the React Tree to find the source file
+      // 2. Once we have a Fiber, walk up the React Tree using multiple traversal methods to find the source file
       // (This skips internal divs to find the actual Component)
-      while (fiber) {
-        if (fiber._debugSource) {
-          return fiber._debugSource; // Found it! { fileName, lineNumber }
+
+      // Way 1: Traverse using 'return' (parent in the fiber tree)
+      let tempFiber = fiber;
+      while (tempFiber) {
+        if (tempFiber._debugSource) {
+          return tempFiber._debugSource; // Found it! { fileName, lineNumber }
         }
-        fiber = fiber.return; // Go to parent component
+        if (tempFiber.alternate?._debugSource) {
+          return tempFiber.alternate._debugSource;
+        }
+        if (tempFiber.memoizedProps?.__source) {
+          return tempFiber.memoizedProps.__source;
+        }
+        if (tempFiber.alternate?.memoizedProps?.__source) {
+          return tempFiber.alternate.memoizedProps.__source;
+        }
+        tempFiber = tempFiber.return;
+      }
+
+      // Way 2: Traverse using '_debugOwner' (owner component that created this fiber)
+      tempFiber = originalFiber;
+      while (tempFiber) {
+        if (tempFiber._debugSource) {
+          return tempFiber._debugSource; // Found it! { fileName, lineNumber }
+        }
+        if (tempFiber.alternate?._debugSource) {
+          return tempFiber.alternate._debugSource;
+        }
+        if (tempFiber.memoizedProps?.__source) {
+          return tempFiber.memoizedProps.__source;
+        }
+        if (tempFiber.alternate?.memoizedProps?.__source) {
+          return tempFiber.alternate.memoizedProps.__source;
+        }
+        tempFiber = tempFiber._debugOwner;
+      }
+    } else if (internalKey) {
+      // Fallback for older React versions (pre-Fiber architecture)
+      // @ts-ignore
+      let internal = currentElement[internalKey];
+
+      // Traverse using '_owner' in the internal instance tree
+      while (internal) {
+        if (internal._currentElement?._source) {
+          return internal._currentElement._source; // Found it! { fileName, lineNumber }
+        }
+        internal = internal._currentElement?._owner;
       }
     }
-    
+
     // If this node has no React info, check its parent
     currentElement = currentElement.parentElement;
   }
-  
+
   return null;
 }
 
@@ -75,7 +120,7 @@ export function Inspector() {
 
       // 1. Use the robust finder
       const source = getReactSource(target);
-      
+
       console.log("🎯 React Source Found:", source);
 
       // 2. Safely extract class/text (handling SVGs/Images correctly)
