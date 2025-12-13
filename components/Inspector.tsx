@@ -10,6 +10,7 @@ function getReactSource(element: HTMLElement) {
     const keys = Object.keys(currentElement);
     const fiberKey = keys.find((k) => k.startsWith("__reactFiber$"));
     const internalKey = keys.find((k) => k.startsWith("__reactInternalInstance$"));
+    const containerKey = keys.find((k) => k.startsWith("__reactContainer$")); // Additional check for root container
 
     if (fiberKey) {
       // @ts-ignore
@@ -23,17 +24,40 @@ function getReactSource(element: HTMLElement) {
       let tempFiber = fiber;
       while (tempFiber) {
         if (tempFiber._debugSource) {
-          return tempFiber._debugSource; // Found it! { fileName, lineNumber }
+          return tempFiber._debugSource; // Legacy _debugSource
         }
         if (tempFiber.alternate?._debugSource) {
           return tempFiber.alternate._debugSource;
         }
         if (tempFiber.memoizedProps?.__source) {
-          return tempFiber.memoizedProps.__source;
+          return tempFiber.memoizedProps.__source; // __source from babel-plugin-transform-react-jsx-source
         }
         if (tempFiber.alternate?.memoizedProps?.__source) {
           return tempFiber.alternate.memoizedProps.__source;
         }
+        if (tempFiber.pendingProps?.__source) {
+          return tempFiber.pendingProps.__source; // Check pendingProps as fallback
+        }
+
+        // Way: Parse _debugInfo stack for React 19+ (hook stacktrace)
+        if (tempFiber._debugInfo && Array.isArray(tempFiber._debugInfo) && tempFiber._debugInfo.length > 0) {
+          const hookInfo = tempFiber._debugInfo[0];
+          if (hookInfo && hookInfo.stack) {
+            const stackLines = hookInfo.stack.split('\n');
+            if (stackLines.length > 1) {
+              const componentLine = stackLines[1].trim(); // Usually the component call after the hook
+              const match = componentLine.match(/at\s+(\w+)\s+\(([^:]+):(\d+):(\d+)\)/);
+              if (match) {
+                return {
+                  fileName: match[2],
+                  lineNumber: parseInt(match[3], 10),
+                  columnNumber: parseInt(match[4], 10)
+                };
+              }
+            }
+          }
+        }
+
         tempFiber = tempFiber.return;
       }
 
@@ -41,7 +65,7 @@ function getReactSource(element: HTMLElement) {
       tempFiber = originalFiber;
       while (tempFiber) {
         if (tempFiber._debugSource) {
-          return tempFiber._debugSource; // Found it! { fileName, lineNumber }
+          return tempFiber._debugSource;
         }
         if (tempFiber.alternate?._debugSource) {
           return tempFiber.alternate._debugSource;
@@ -52,8 +76,58 @@ function getReactSource(element: HTMLElement) {
         if (tempFiber.alternate?.memoizedProps?.__source) {
           return tempFiber.alternate.memoizedProps.__source;
         }
+        if (tempFiber.pendingProps?.__source) {
+          return tempFiber.pendingProps.__source;
+        }
+
+        // Parse _debugInfo as above
+        if (tempFiber._debugInfo && Array.isArray(tempFiber._debugInfo) && tempFiber._debugInfo.length > 0) {
+          const hookInfo = tempFiber._debugInfo[0];
+          if (hookInfo && hookInfo.stack) {
+            const stackLines = hookInfo.stack.split('\n');
+            if (stackLines.length > 1) {
+              const componentLine = stackLines[1].trim();
+              const match = componentLine.match(/at\s+(\w+)\s+\(([^:]+):(\d+):(\d+)\)/);
+              if (match) {
+                return {
+                  fileName: match[2],
+                  lineNumber: parseInt(match[3], 10),
+                  columnNumber: parseInt(match[4], 10)
+                };
+              }
+            }
+          }
+        }
+
         tempFiber = tempFiber._debugOwner;
       }
+
+      // Way 3: Traverse siblings if no source found in parents
+      tempFiber = originalFiber.sibling;
+      while (tempFiber) {
+        if (tempFiber._debugSource) {
+          return tempFiber._debugSource;
+        }
+        if (tempFiber.memoizedProps?.__source) {
+          return tempFiber.memoizedProps.__source;
+        }
+        // ... add other checks if needed
+        tempFiber = tempFiber.sibling;
+      }
+
+      // Way 4: Check child fibers
+      tempFiber = originalFiber.child;
+      while (tempFiber) {
+        if (tempFiber._debugSource) {
+          return tempFiber._debugSource;
+        }
+        if (tempFiber.memoizedProps?.__source) {
+          return tempFiber.memoizedProps.__source;
+        }
+        // ... add other checks if needed
+        tempFiber = tempFiber.child;
+      }
+
     } else if (internalKey) {
       // Fallback for older React versions (pre-Fiber architecture)
       // @ts-ignore
@@ -61,10 +135,38 @@ function getReactSource(element: HTMLElement) {
 
       // Traverse using '_owner' in the internal instance tree
       while (internal) {
-        if (internal._currentElement?._source) {
-          return internal._currentElement._source; // Found it! { fileName, lineNumber }
+        if (internal._source) {
+          return internal._source; // Modern internal
         }
-        internal = internal._currentElement?._owner;
+        if (internal._currentElement?._source) {
+          return internal._currentElement._source;
+        }
+        internal = internal._currentElement?._owner || internal._owner;
+      }
+    } else if (containerKey) {
+      // Root container check
+      // @ts-ignore
+      let container = currentElement[containerKey];
+      if (container._debugSource || container.memoizedProps?.__source) {
+        return container._debugSource || container.memoizedProps.__source;
+      }
+    }
+
+    // Fallback Way: LocatorJS data-id approach if runtime is installed
+    let locatorElement = currentElement.closest('[data-locatorjs-id]');
+    if (locatorElement) {
+      const id = locatorElement.getAttribute('data-locatorjs-id');
+      // @ts-expect-error: getLocatorTarget is injected globally if present
+      if (id && typeof window.getLocatorTarget === 'function') {
+        // @ts-expect-error: getLocatorTarget is injected globally if present
+        const targetInfo = window.getLocatorTarget(id);
+        if (targetInfo) {
+          return {
+            fileName: targetInfo.file || targetInfo.path,
+            lineNumber: targetInfo.line,
+            columnNumber: targetInfo.column
+          };
+        }
       }
     }
 
@@ -120,7 +222,7 @@ export function Inspector() {
 
       // 1. Use the robust finder
       const source = getReactSource(target);
-
+      
       console.log("🎯 React Source Found:", source);
 
       // 2. Safely extract class/text (handling SVGs/Images correctly)
