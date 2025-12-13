@@ -1,25 +1,32 @@
 "use client";
 import { useEffect, useState } from "react";
 
-// --- HELPER: Dig into React Internals ---
+// --- HELPER: Robust React Source Finder ---
 function getReactSource(element: HTMLElement) {
-  // React stores data on the DOM node using a key starting with "__reactFiber$"
-  const key = Object.keys(element).find((k) => k.startsWith("__reactFiber$"));
-  
-  if (!key) return null;
-  
-  // @ts-ignore
-  const fiber = element[key];
-  
-  // _debugSource contains { fileName, lineNumber } in Dev Mode
-  // If not found immediately, we traverse up the tree to find the nearest component
-  let currentFiber = fiber;
-  while (currentFiber) {
-      if (currentFiber._debugSource) {
-          return currentFiber._debugSource;
+  let currentElement: HTMLElement | null = element;
+
+  // 1. Walk up the DOM tree until we find a node tracked by React
+  while (currentElement) {
+    const key = Object.keys(currentElement).find((k) => k.startsWith("__reactFiber$"));
+
+    if (key) {
+      // @ts-ignore
+      let fiber = currentElement[key];
+
+      // 2. Once we have a Fiber, walk up the React Tree to find the source file
+      // (This skips internal divs to find the actual Component)
+      while (fiber) {
+        if (fiber._debugSource) {
+          return fiber._debugSource; // Found it! { fileName, lineNumber }
+        }
+        fiber = fiber.return; // Go to parent component
       }
-      currentFiber = currentFiber.return;
+    }
+    
+    // If this node has no React info, check its parent
+    currentElement = currentElement.parentElement;
   }
+  
   return null;
 }
 
@@ -46,7 +53,7 @@ export function Inspector() {
       e.stopPropagation();
       const target = e.target as HTMLElement;
       if (target === document.body || target === document.documentElement) return;
-      
+
       target.style.outline = "2px solid #3b82f6";
       target.style.backgroundColor = "rgba(59, 130, 246, 0.1)";
       target.style.cursor = "crosshair";
@@ -57,6 +64,7 @@ export function Inspector() {
       const target = e.target as HTMLElement;
       target.style.outline = "";
       target.style.backgroundColor = "";
+      target.style.cursor = "";
     };
 
     const handleClick = (e: MouseEvent) => {
@@ -64,21 +72,32 @@ export function Inspector() {
       e.preventDefault();
       e.stopPropagation();
       const target = e.target as HTMLElement;
-      
-      // 1. Get the Source Info (File Path & Line Number)
+
+      // 1. Use the robust finder
       const source = getReactSource(target);
       
-      console.log("🎯 React Source:", source);
+      console.log("🎯 React Source Found:", source);
 
-      // 2. Send to Parent
-      window.parent.postMessage({ 
-        type: 'ELEMENT_SELECTED', 
+      // 2. Safely extract class/text (handling SVGs/Images correctly)
+      let className = "";
+      if (typeof target.className === 'string') {
+        className = target.className;
+      } else if (target.getAttribute) {
+        // Handle SVGs where className is an object
+        className = target.getAttribute("class") || "";
+      }
+
+      const safeText = target.innerText || target.textContent || "";
+
+      // 3. Send to Parent
+      window.parent.postMessage({
+        type: 'ELEMENT_SELECTED',
         tagName: target.tagName.toLowerCase(),
-        // This is the Magic Data:
-        fileName: source?.fileName || null, 
+        fileName: source?.fileName || null,
         lineNumber: source?.lineNumber || null,
-        // Fallback code
-        code: target.outerHTML 
+        code: target.outerHTML,
+        className: className,
+        innerText: safeText.substring(0, 100)
       }, '*');
     };
 
