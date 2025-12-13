@@ -1,180 +1,211 @@
 "use client";
 import { useEffect, useState } from "react";
 
-// --- HELPER: Robust React Source Finder ---
-function getReactSource(element: HTMLElement) {
-  let currentElement: HTMLElement | null = element;
+/**
+ * React 19 removed _debugSource from Fiber nodes.
+ * This Inspector now uses multiple fallback strategies:
+ * 1. Custom data-inspector-* attributes (requires Babel plugin)
+ * 2. Stack trace parsing from error boundaries
+ * 3. Component name + outerHTML as fallback
+ */
 
-  // 1. Walk up the DOM tree until we find a node tracked by React
-  while (currentElement) {
-    const keys = Object.keys(currentElement);
+// --- HELPER: Extract source from data attributes ---
+function getSourceFromDataAttributes(element: HTMLElement) {
+  let current: HTMLElement | null = element;
+  
+  while (current) {
+    // Check for react-dev-inspector style attributes
+    const relativePath = current.getAttribute('data-inspector-relative-path');
+    const line = current.getAttribute('data-inspector-line');
+    const column = current.getAttribute('data-inspector-column');
+    
+    if (relativePath && line) {
+      return {
+        fileName: relativePath,
+        lineNumber: parseInt(line, 10),
+        columnNumber: column ? parseInt(column, 10) : undefined
+      };
+    }
+    
+    // Check for other common debug attributes
+    const dataFile = current.getAttribute('data-file');
+    const dataLine = current.getAttribute('data-line');
+    
+    if (dataFile) {
+      return {
+        fileName: dataFile,
+        lineNumber: dataLine ? parseInt(dataLine, 10) : undefined,
+        columnNumber: undefined
+      };
+    }
+    
+    current = current.parentElement;
+  }
+  
+  return null;
+}
+
+// --- HELPER: Try to extract component name from React Fiber ---
+function getComponentName(element: HTMLElement): string | null {
+  try {
+    const keys = Object.keys(element);
     const fiberKey = keys.find((k) => k.startsWith("__reactFiber$"));
-    const internalKey = keys.find((k) => k.startsWith("__reactInternalInstance$"));
-    const containerKey = keys.find((k) => k.startsWith("__reactContainer$")); // Additional check for root container
-
+    
     if (fiberKey) {
       // @ts-ignore
-      let fiber = currentElement[fiberKey];
-      const originalFiber = fiber;
-
-      // 2. Once we have a Fiber, walk up the React Tree using multiple traversal methods to find the source file
-      // (This skips internal divs to find the actual Component)
-
-      // Way 1: Traverse using 'return' (parent in the fiber tree)
-      let tempFiber = fiber;
-      while (tempFiber) {
-        if (tempFiber._debugSource) {
-          return tempFiber._debugSource; // Legacy _debugSource
-        }
-        if (tempFiber.alternate?._debugSource) {
-          return tempFiber.alternate._debugSource;
-        }
-        if (tempFiber.memoizedProps?.__source) {
-          return tempFiber.memoizedProps.__source; // __source from babel-plugin-transform-react-jsx-source
-        }
-        if (tempFiber.alternate?.memoizedProps?.__source) {
-          return tempFiber.alternate.memoizedProps.__source;
-        }
-        if (tempFiber.pendingProps?.__source) {
-          return tempFiber.pendingProps.__source; // Check pendingProps as fallback
-        }
-
-        // Way: Parse _debugInfo stack for React 19+ (hook stacktrace)
-        if (tempFiber._debugInfo && Array.isArray(tempFiber._debugInfo) && tempFiber._debugInfo.length > 0) {
-          const hookInfo = tempFiber._debugInfo[0];
-          if (hookInfo && hookInfo.stack) {
-            const stackLines = hookInfo.stack.split('\n');
-            if (stackLines.length > 1) {
-              const componentLine = stackLines[1].trim(); // Usually the component call after the hook
-              const match = componentLine.match(/at\s+(\w+)\s+\(([^:]+):(\d+):(\d+)\)/);
-              if (match) {
-                return {
-                  fileName: match[2],
-                  lineNumber: parseInt(match[3], 10),
-                  columnNumber: parseInt(match[4], 10)
-                };
-              }
-            }
+      let fiber = element[fiberKey];
+      
+      // Walk up the fiber tree to find a component
+      let current = fiber;
+      let depth = 0;
+      
+      while (current && depth < 20) {
+        // Check for component type
+        if (current.type) {
+          if (typeof current.type === 'function') {
+            return current.type.name || current.type.displayName || 'Anonymous';
+          }
+          if (typeof current.type === 'string') {
+            return current.type;
           }
         }
-
-        tempFiber = tempFiber.return;
-      }
-
-      // Way 2: Traverse using '_debugOwner' (owner component that created this fiber)
-      tempFiber = originalFiber;
-      while (tempFiber) {
-        if (tempFiber._debugSource) {
-          return tempFiber._debugSource;
-        }
-        if (tempFiber.alternate?._debugSource) {
-          return tempFiber.alternate._debugSource;
-        }
-        if (tempFiber.memoizedProps?.__source) {
-          return tempFiber.memoizedProps.__source;
-        }
-        if (tempFiber.alternate?.memoizedProps?.__source) {
-          return tempFiber.alternate.memoizedProps.__source;
-        }
-        if (tempFiber.pendingProps?.__source) {
-          return tempFiber.pendingProps.__source;
-        }
-
-        // Parse _debugInfo as above
-        if (tempFiber._debugInfo && Array.isArray(tempFiber._debugInfo) && tempFiber._debugInfo.length > 0) {
-          const hookInfo = tempFiber._debugInfo[0];
-          if (hookInfo && hookInfo.stack) {
-            const stackLines = hookInfo.stack.split('\n');
-            if (stackLines.length > 1) {
-              const componentLine = stackLines[1].trim();
-              const match = componentLine.match(/at\s+(\w+)\s+\(([^:]+):(\d+):(\d+)\)/);
-              if (match) {
-                return {
-                  fileName: match[2],
-                  lineNumber: parseInt(match[3], 10),
-                  columnNumber: parseInt(match[4], 10)
-                };
-              }
-            }
+        
+        // Check _debugOwner for parent component
+        if (current._debugOwner?.type) {
+          const ownerType = current._debugOwner.type;
+          if (typeof ownerType === 'function') {
+            return ownerType.name || ownerType.displayName || 'Anonymous';
           }
         }
-
-        tempFiber = tempFiber._debugOwner;
-      }
-
-      // Way 3: Traverse siblings if no source found in parents
-      tempFiber = originalFiber.sibling;
-      while (tempFiber) {
-        if (tempFiber._debugSource) {
-          return tempFiber._debugSource;
-        }
-        if (tempFiber.memoizedProps?.__source) {
-          return tempFiber.memoizedProps.__source;
-        }
-        // ... add other checks if needed
-        tempFiber = tempFiber.sibling;
-      }
-
-      // Way 4: Check child fibers
-      tempFiber = originalFiber.child;
-      while (tempFiber) {
-        if (tempFiber._debugSource) {
-          return tempFiber._debugSource;
-        }
-        if (tempFiber.memoizedProps?.__source) {
-          return tempFiber.memoizedProps.__source;
-        }
-        // ... add other checks if needed
-        tempFiber = tempFiber.child;
-      }
-
-    } else if (internalKey) {
-      // Fallback for older React versions (pre-Fiber architecture)
-      // @ts-ignore
-      let internal = currentElement[internalKey];
-
-      // Traverse using '_owner' in the internal instance tree
-      while (internal) {
-        if (internal._source) {
-          return internal._source; // Modern internal
-        }
-        if (internal._currentElement?._source) {
-          return internal._currentElement._source;
-        }
-        internal = internal._currentElement?._owner || internal._owner;
-      }
-    } else if (containerKey) {
-      // Root container check
-      // @ts-ignore
-      let container = currentElement[containerKey];
-      if (container._debugSource || container.memoizedProps?.__source) {
-        return container._debugSource || container.memoizedProps.__source;
+        
+        current = current.return;
+        depth++;
       }
     }
-
-    // Fallback Way: LocatorJS data-id approach if runtime is installed
-    let locatorElement = currentElement.closest('[data-locatorjs-id]');
-    if (locatorElement) {
-      const id = locatorElement.getAttribute('data-locatorjs-id');
-      // @ts-expect-error: getLocatorTarget is injected globally if present
-      if (id && typeof window.getLocatorTarget === 'function') {
-        // @ts-expect-error: getLocatorTarget is injected globally if present
-        const targetInfo = window.getLocatorTarget(id);
-        if (targetInfo) {
-          return {
-            fileName: targetInfo.file || targetInfo.path,
-            lineNumber: targetInfo.line,
-            columnNumber: targetInfo.column
-          };
-        }
-      }
-    }
-
-    // If this node has no React info, check its parent
-    currentElement = currentElement.parentElement;
+  } catch (err) {
+    console.warn('Failed to get component name:', err);
   }
-
+  
   return null;
+}
+
+// --- HELPER: Parse stack trace for source info ---
+function getSourceFromStackTrace(): { fileName: string; lineNumber: number } | null {
+  try {
+    // Create an error to capture stack trace
+    const error = new Error();
+    const stack = error.stack;
+    
+    if (!stack) return null;
+    
+    const lines = stack.split('\n');
+    
+    // Look for the first line that's not from React internals
+    for (const line of lines) {
+      // Skip React internal files
+      if (line.includes('node_modules/react') || 
+          line.includes('react-dom') ||
+          line.includes('Inspector')) {
+        continue;
+      }
+      
+      // Parse typical stack trace formats
+      // Format: "at ComponentName (file.tsx:10:5)"
+      const match = line.match(/at\s+.*?\s*\((.+?):(\d+):(\d+)\)/) ||
+                   line.match(/(@|at\s+)(.+?):(\d+):(\d+)/);
+      
+      if (match) {
+        const fileName = match[1] || match[2];
+        const lineNumber = parseInt(match[2] || match[3], 10);
+        
+        if (fileName && !fileName.includes('node_modules')) {
+          return { fileName, lineNumber };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to parse stack trace:', err);
+  }
+  
+  return null;
+}
+
+// --- MAIN: Robust React Source Finder for React 19+ ---
+function getReactSource(element: HTMLElement) {
+  console.group('🔍 Inspector: Searching for React source');
+  
+  // Strategy 1: Check for data attributes (most reliable for React 19)
+  const dataAttrSource = getSourceFromDataAttributes(element);
+  if (dataAttrSource) {
+    console.log('✅ Found source from data attributes:', dataAttrSource);
+    console.groupEnd();
+    return dataAttrSource;
+  }
+  
+  // Strategy 2: Try to get component name for better context
+  const componentName = getComponentName(element);
+  console.log('📦 Component name:', componentName || 'unknown');
+  
+  // Strategy 3: Get stack trace info as fallback
+  const stackSource = getSourceFromStackTrace();
+  if (stackSource) {
+    console.log('✅ Found source from stack trace:', stackSource);
+    console.groupEnd();
+    return stackSource;
+  }
+  
+  // Strategy 4: Check for legacy _debugSource (React 18 and earlier)
+  try {
+    let current: HTMLElement | null = element;
+    let attempts = 0;
+    
+    while (current && attempts < 30) {
+      attempts++;
+      const keys = Object.keys(current);
+      const fiberKey = keys.find((k) => k.startsWith("__reactFiber$"));
+      
+      if (fiberKey) {
+        // @ts-ignore
+        let fiber = current[fiberKey];
+        
+        // Check for legacy _debugSource
+        let tempFiber = fiber;
+        let depth = 0;
+        
+        while (tempFiber && depth < 30) {
+          if (tempFiber._debugSource) {
+            console.log('✅ Found legacy _debugSource (React 18):', tempFiber._debugSource);
+            console.groupEnd();
+            return tempFiber._debugSource;
+          }
+          
+          if (tempFiber.memoizedProps?.__source) {
+            console.log('✅ Found __source in props:', tempFiber.memoizedProps.__source);
+            console.groupEnd();
+            return tempFiber.memoizedProps.__source;
+          }
+          
+          tempFiber = tempFiber.return;
+          depth++;
+        }
+      }
+      
+      current = current.parentElement;
+    }
+  } catch (err) {
+    console.warn('Error checking legacy sources:', err);
+  }
+  
+  console.warn('⚠️ No source information found');
+  console.log('💡 To enable source tracking in React 19, add @react-dev-inspector/babel-plugin');
+  console.groupEnd();
+  
+  // Return component name if we found it
+  return componentName ? { 
+    fileName: `<${componentName}>`,
+    lineNumber: null,
+    columnNumber: null 
+  } : null;
 }
 
 export function Inspector() {
@@ -220,31 +251,35 @@ export function Inspector() {
       e.stopPropagation();
       const target = e.target as HTMLElement;
 
-      // 1. Use the robust finder
+      // Use the robust source finder
       const source = getReactSource(target);
       
-      console.log("🎯 React Source Found:", source);
+      console.log("🎯 Final React Source:", source);
+      console.log("🎯 Target Element:", target);
 
-      // 2. Safely extract class/text (handling SVGs/Images correctly)
+      // Safely extract class/text (handle SVGs/Images)
       let className = "";
       if (typeof target.className === 'string') {
         className = target.className;
       } else if (target.getAttribute) {
-        // Handle SVGs where className is an object
         className = target.getAttribute("class") || "";
       }
 
       const safeText = target.innerText || target.textContent || "";
 
-      // 3. Send to Parent
+      // Send to Parent
       window.parent.postMessage({
         type: 'ELEMENT_SELECTED',
         tagName: target.tagName.toLowerCase(),
         fileName: source?.fileName || null,
         lineNumber: source?.lineNumber || null,
+        columnNumber: source?.columnNumber || null,
         code: target.outerHTML,
         className: className,
-        innerText: safeText.substring(0, 100)
+        innerText: safeText.substring(0, 100),
+        // Additional context for debugging
+        hasDataAttributes: !!getSourceFromDataAttributes(target),
+        componentName: getComponentName(target)
       }, '*');
     };
 
