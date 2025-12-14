@@ -210,6 +210,7 @@ function getReactSource(element: HTMLElement) {
 
 export function Inspector() {
   const [active, setActive] = useState(false);
+  const [hoveredElement, setHoveredElement] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -224,6 +225,7 @@ export function Inspector() {
   useEffect(() => {
     if (!active) {
       document.body.style.cursor = "default";
+      setHoveredElement(null);
       return;
     }
 
@@ -232,14 +234,17 @@ export function Inspector() {
       const target = e.target as HTMLElement;
       if (target === document.body || target === document.documentElement) return;
 
-      target.style.outline = "2px solid #3b82f6";
+      setHoveredElement(target);
+      target.style.outline = "2px dashed #3b82f6";
       target.style.backgroundColor = "rgba(59, 130, 246, 0.1)";
       target.style.cursor = "crosshair";
+      target.style.transition = "all 0.15s ease-in-out";
     };
 
     const handleMouseOut = (e: MouseEvent) => {
       e.stopPropagation();
       const target = e.target as HTMLElement;
+      setHoveredElement(null);
       target.style.outline = "";
       target.style.backgroundColor = "";
       target.style.cursor = "";
@@ -293,6 +298,46 @@ export function Inspector() {
       document.removeEventListener("click", handleClick, true);
     };
   }, [active]);
+
+  // Render tag label when hovering
+  useEffect(() => {
+    if (!hoveredElement || !active) return;
+
+    const tagName = hoveredElement.tagName.toLowerCase();
+    const rect = hoveredElement.getBoundingClientRect();
+
+    // Create or update the label element
+    let label = document.getElementById('inspector-tag-label');
+    if (!label) {
+      label = document.createElement('div');
+      label.id = 'inspector-tag-label';
+      document.body.appendChild(label);
+    }
+
+    // Style the label
+    label.style.position = 'fixed';
+    label.style.backgroundColor = '#3b82f6';
+    label.style.color = 'white';
+    label.style.padding = '2px 6px';
+    label.style.fontSize = '12px';
+    label.style.fontFamily = 'monospace';
+    label.style.borderRadius = '2px';
+    label.style.pointerEvents = 'none';
+    label.style.zIndex = '999999';
+    label.style.transition = 'all 0.15s ease-in-out';
+    label.textContent = tagName;
+
+    // Position at top-left of the element
+    label.style.left = `${rect.left + window.scrollX}px`;
+    label.style.top = `${rect.top + window.scrollY - 20}px`;
+
+    return () => {
+      const labelToRemove = document.getElementById('inspector-tag-label');
+      if (labelToRemove) {
+        labelToRemove.remove();
+      }
+    };
+  }, [hoveredElement, active]);
 
   return null;
 }
