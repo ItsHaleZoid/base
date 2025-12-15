@@ -296,12 +296,12 @@ export function Inspector() {
           left: 0,
           pointerEvents: "none",
           zIndex: 999999,
-          border: "3px solid #3b82f6",
+          border: "2px solid #3b82f6",
           backgroundColor: "rgba(59, 130, 246, 0.05)",
           transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
           opacity: 0,
           borderRadius: "4px",
-          boxShadow: "0 4px 12px rgba(59, 130, 246, 0.25)"
+          padding: "4px",
         }}
       >
         <div 
@@ -313,13 +313,13 @@ export function Inspector() {
             background: "#2563eb", // Darker blue for selected state
             color: "white",
             fontSize: "12px",
-            fontWeight: "bold",
-            fontFamily: "monospace",
+            fontWeight: "medium",
+            fontFamily: "Inter",
             padding: "2px 8px",
             borderRadius: "3px",
             pointerEvents: "none",
             whiteSpace: "nowrap",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+            marginBottom: "4px"
           }}
         />
       </div>
