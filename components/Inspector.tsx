@@ -277,11 +277,11 @@ export function Inspector() {
             background: "#3b82f6",
             color: "white",
             fontSize: "11px",
-            fontFamily: "monospace",
-            padding: "2px 6px",
-            borderRadius: "3px",
+            fontFamily: "Inter",
+            padding: "4px",
             pointerEvents: "none",
-            whiteSpace: "nowrap"
+            whiteSpace: "nowrap",
+            marginBottom: "4px"
           }}
         />
       </div>
@@ -300,7 +300,6 @@ export function Inspector() {
           backgroundColor: "rgba(59, 130, 246, 0.05)",
           transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
           opacity: 0,
-          borderRadius: "4px",
           padding: "4px",
         }}
       >
