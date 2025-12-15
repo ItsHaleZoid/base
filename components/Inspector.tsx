@@ -7,7 +7,6 @@ interface ElementSource {
   lineNumber: number | null;
   columnNumber: number | null;
   componentName?: string | null;
-  jsxCode?: string;  // Reconstructed JSX from element
 }
 
 interface ElementSignature {
@@ -27,117 +26,58 @@ interface ElementSignature {
   };
 }
 
-// --- NEW: Reconstruct JSX from DOM element ---
-function reconstructJSX(element: HTMLElement, depth: number = 0, maxDepth: number = 3): string {
-  if (depth > maxDepth) {
-    return '...';
-  }
-
-  const tagName = element.tagName.toLowerCase();
-  const indent = '  '.repeat(depth);
-  
-  // Get attributes
-  const attrs: string[] = [];
-  
-  // Get className (handle different formats)
-  let className = '';
-  if (typeof element.className === 'string') {
-    className = element.className;
-  } else if ((element.className as any)?.baseVal) {
-    className = (element.className as any).baseVal;
-  } else if (element.getAttribute) {
-    className = element.getAttribute('class') || '';
-  }
-  
-  if (className) {
-    // Split classes and format nicely
-    const classes = className.trim().split(/\s+/).filter(Boolean);
-    if (classes.length > 0) {
-      attrs.push(`className="${classes.join(' ')}"`);
-    }
-  }
-  
-  // Get other attributes (skip React internal and data attributes)
-  if (element.attributes) {
-    for (let i = 0; i < element.attributes.length; i++) {
-      const attr = element.attributes[i];
-      
-      // Skip certain attributes
-      if (attr.name === 'class' || 
-          attr.name.startsWith('data-react') ||
-          attr.name.startsWith('data-__react') ||
-          attr.name.startsWith('__react') ||
-          attr.name === 'style') continue;
-      
-      // Convert attribute names to camelCase for JSX
-      let attrName = attr.name;
-      if (attrName.includes('-')) {
-        attrName = attrName.replace(/-([a-z])/g, (g) => g[1].toUpperCase());
-      }
-      
-      // Handle boolean attributes
-      if (attr.value === '' || attr.value === attr.name) {
-        attrs.push(attrName);
-      } else {
-        attrs.push(`${attrName}="${attr.value}"`);
-      }
-    }
-  }
-  
-  // Get inline styles
-  const styleAttr = element.getAttribute('style');
-  if (styleAttr) {
-    attrs.push(`style={{ ${styleAttr} }}`);
-  }
-  
-  // Build opening tag
-  const attrsStr = attrs.length > 0 ? ' ' + attrs.join(' ') : '';
-  
-  // Check if element has children
-  const children = Array.from(element.childNodes);
-  
-  // Filter out text nodes that are just whitespace
-  const meaningfulChildren = children.filter(child => {
-    if (child.nodeType === Node.TEXT_NODE) {
-      return child.textContent?.trim().length;
-    }
-    return true;
-  });
-  
-  // Self-closing tags
-  const selfClosingTags = ['img', 'br', 'hr', 'input', 'meta', 'link'];
-  if (selfClosingTags.includes(tagName) || meaningfulChildren.length === 0) {
-    return `${indent}<${tagName}${attrsStr} />`;
-  }
-  
-  // Has only text content
-  if (meaningfulChildren.length === 1 && meaningfulChildren[0].nodeType === Node.TEXT_NODE) {
-    const text = meaningfulChildren[0].textContent?.trim() || '';
-    if (text.length < 50) {
-      return `${indent}<${tagName}${attrsStr}>${text}</${tagName}>`;
-    }
-  }
-  
-  // Has child elements
-  let jsx = `${indent}<${tagName}${attrsStr}>\n`;
-  
-  for (const child of meaningfulChildren) {
-    if (child.nodeType === Node.TEXT_NODE) {
-      const text = child.textContent?.trim();
-      if (text) {
-        jsx += `${indent}  {${JSON.stringify(text)}}\n`;
-      }
-    } else if (child.nodeType === Node.ELEMENT_NODE) {
-      jsx += reconstructJSX(child as HTMLElement, depth + 1, maxDepth) + '\n';
-    }
-  }
-  
-  jsx += `${indent}</${tagName}>`;
-  
-  return jsx;
+interface InspectedElement {
+  element: HTMLElement;
+  source: ElementSource;
+  signature: ElementSignature;
 }
 
-// --- HELPER: Extract component name from React Fiber ---
+// --- HELPER: Extract source from data attributes ---
+function getSourceFromDataAttributes(element: HTMLElement): ElementSource | null {
+  let current: HTMLElement | null = element;
+  let depth = 0;
+  const maxDepth = 10;
+  
+  while (current && depth < maxDepth) {
+    // Check for new inspector attributes
+    const relativePath = current.getAttribute('data-inspector-relative-path') || 
+                        current.getAttribute('data-file-path') ||
+                        current.getAttribute('data-source-file');
+    const line = current.getAttribute('data-inspector-line') || 
+                current.getAttribute('data-line-number') ||
+                current.getAttribute('data-source-line');
+    const column = current.getAttribute('data-inspector-column') ||
+                  current.getAttribute('data-column-number') ||
+                  current.getAttribute('data-source-column');
+    
+    if (relativePath) {
+      return {
+        fileName: relativePath,
+        lineNumber: line ? parseInt(line, 10) : null,
+        columnNumber: column ? parseInt(column, 10) : null,
+      };
+    }
+    
+    // Legacy data attributes
+    const dataFile = current.getAttribute('data-file');
+    const dataLine = current.getAttribute('data-line');
+    const dataColumn = current.getAttribute('data-column');
+    
+    if (dataFile) {
+      return {
+        fileName: dataFile,
+        lineNumber: dataLine ? parseInt(dataLine, 10) : null,
+        columnNumber: dataColumn ? parseInt(dataColumn, 10) : null,
+      };
+    }
+    
+    current = current.parentElement;
+    depth++;
+  }
+  return null;
+}
+
+// --- HELPER: Try to extract component name from React Fiber ---
 function getComponentName(element: HTMLElement): string | null {
   try {
     const keys = Object.keys(element);
@@ -151,20 +91,34 @@ function getComponentName(element: HTMLElement): string | null {
       const maxDepth = 30;
       
       while (current && depth < maxDepth) {
+        // Check for React 18+ structure
         if (current.type) {
           if (typeof current.type === 'function') {
-            return current.type.name || current.type.displayName || 'Anonymous';
+            return current.type.name || current.type.displayName || current.type.$$typeof?.toString() || 'Anonymous';
           }
           if (typeof current.type === 'string') {
             return current.type;
           }
+          // Check for forwardRef
           if (current.type.render) {
             return current.type.render.name || current.type.render.displayName || 'ForwardRef';
           }
         }
         
+        // Check for _debugSource (React DevTools)
         if (current._debugSource) {
           return current._debugSource.fileName || null;
+        }
+        
+        // Check for memoized component
+        if (current.memoizedState) {
+          const state = current.memoizedState;
+          if (state.element?.type) {
+            const type = state.element.type;
+            if (typeof type === 'function') {
+              return type.name || type.displayName || null;
+            }
+          }
         }
         
         current = current.return || current._owner;
@@ -172,34 +126,7 @@ function getComponentName(element: HTMLElement): string | null {
       }
     }
   } catch (err) {
-    // Silently fail
-  }
-  return null;
-}
-
-// --- HELPER: Extract source from data attributes ---
-function getSourceFromDataAttributes(element: HTMLElement): ElementSource | null {
-  try {
-    const fileName = element.getAttribute('data-source-file') || 
-                     element.getAttribute('data-file') ||
-                     element.getAttribute('data-filename');
-    const lineNumber = element.getAttribute('data-source-line') || 
-                       element.getAttribute('data-line');
-    const columnNumber = element.getAttribute('data-source-column') || 
-                         element.getAttribute('data-column');
-    const componentName = element.getAttribute('data-component-name') ||
-                          element.getAttribute('data-component');
-    
-    if (fileName) {
-      return {
-        fileName,
-        lineNumber: lineNumber ? parseInt(lineNumber, 10) : null,
-        columnNumber: columnNumber ? parseInt(columnNumber, 10) : null,
-        componentName: componentName || null,
-      };
-    }
-  } catch (err) {
-    // Silently fail
+    // Silently fail - this is expected in some environments
   }
   return null;
 }
@@ -218,6 +145,7 @@ function getReactDevToolsSource(element: HTMLElement): ElementSource | null {
       const maxDepth = 30;
       
       while (current && depth < maxDepth) {
+        // React DevTools stores source info here
         if (current._debugSource) {
           return {
             fileName: current._debugSource.fileName || null,
@@ -227,6 +155,7 @@ function getReactDevToolsSource(element: HTMLElement): ElementSource | null {
           };
         }
         
+        // Check parent fibers
         current = current.return || current._owner;
         depth++;
       }
@@ -237,28 +166,84 @@ function getReactDevToolsSource(element: HTMLElement): ElementSource | null {
   return null;
 }
 
-// --- HELPER: Extract element signature ---
+// --- HELPER: Parse stack trace ---
+function getSourceFromStackTrace(): ElementSource | null {
+  try {
+    const error = new Error();
+    if (!error.stack) return null;
+    
+    const lines = error.stack.split('\n');
+    const skipPatterns = [
+      'node_modules/react',
+      'node_modules/next',
+      'Inspector',
+      'at Object.',
+      'at eval',
+    ];
+    
+    for (const line of lines) {
+      // Skip framework code
+      if (skipPatterns.some(pattern => line.includes(pattern))) continue;
+      
+      // Match various stack trace formats
+      const patterns = [
+        /at\s+.*?\s*\((.+?):(\d+):(\d+)\)/,
+        /(@|at\s+)(.+?):(\d+):(\d+)/,
+        /\((.+?):(\d+):(\d+)\)/,
+      ];
+      
+      for (const pattern of patterns) {
+        const match = line.match(pattern);
+        if (match) {
+          const fileName = match[1] || match[2] || match[3];
+          const lineNum = match[2] || match[3] || match[4];
+          const colNum = match[3] || match[4] || match[5];
+          
+          if (fileName && !fileName.includes('node_modules') && !fileName.includes('webpack')) {
+            return {
+              fileName: fileName.trim(),
+              lineNumber: lineNum ? parseInt(lineNum, 10) : null,
+              columnNumber: colNum ? parseInt(colNum, 10) : null,
+            };
+          }
+        }
+      }
+    }
+  } catch (err) {
+    // Silently fail
+  }
+  return null;
+}
+
+// --- HELPER: Extract element signature for code matching ---
 function extractElementSignature(element: HTMLElement): ElementSignature {
   const tagName = element.tagName.toLowerCase();
   
+  // Get className
   let className = "";
   if (typeof element.className === 'string') {
     className = element.className;
   } else if ((element.className as any)?.baseVal) {
+    // SVG elements
     className = (element.className as any).baseVal;
   } else if (element.getAttribute) {
     className = element.getAttribute("class") || "";
   }
   
+  // Get ID
   const id = element.id || element.getAttribute("id") || "";
+  
+  // Get text content (normalized)
   const textContent = (element.innerText || element.textContent || "")
     .trim()
     .replace(/\s+/g, ' ')
-    .substring(0, 200);
+    .substring(0, 200); // Limit length
   
+  // Get HTML
   const innerHTML = element.innerHTML || "";
   const outerHTML = element.outerHTML || "";
   
+  // Extract all attributes
   const attributes: Record<string, string> = {};
   if (element.attributes) {
     for (let i = 0; i < element.attributes.length; i++) {
@@ -267,6 +252,7 @@ function extractElementSignature(element: HTMLElement): ElementSignature {
     }
   }
   
+  // Get computed styles (useful for matching)
   const computedStyles: ElementSignature['computedStyles'] = {};
   try {
     const styles = window.getComputedStyle(element);
@@ -293,26 +279,31 @@ function extractElementSignature(element: HTMLElement): ElementSignature {
 
 // --- MAIN SOURCE FINDER ---
 function getReactSource(element: HTMLElement): ElementSource {
-  // Priority 1: Data attributes
+  // Priority 1: Data attributes (most reliable)
   const dataAttrSource = getSourceFromDataAttributes(element);
   if (dataAttrSource && dataAttrSource.fileName) {
     return {
       ...dataAttrSource,
-      componentName: dataAttrSource.componentName || getComponentName(element),
-      jsxCode: reconstructJSX(element),
+      componentName: getComponentName(element),
     };
   }
   
   // Priority 2: React DevTools source
   const devToolsSource = getReactDevToolsSource(element);
   if (devToolsSource && devToolsSource.fileName) {
+    return devToolsSource;
+  }
+  
+  // Priority 3: Stack trace (fallback)
+  const stackSource = getSourceFromStackTrace();
+  if (stackSource && stackSource.fileName) {
     return {
-      ...devToolsSource,
-      jsxCode: reconstructJSX(element),
+      ...stackSource,
+      componentName: getComponentName(element),
     };
   }
   
-  // Priority 3: Component name only
+  // Priority 4: Component name only
   const componentName = getComponentName(element);
   if (componentName) {
     return {
@@ -320,23 +311,22 @@ function getReactSource(element: HTMLElement): ElementSource {
       lineNumber: null,
       columnNumber: null,
       componentName,
-      jsxCode: reconstructJSX(element),
     };
   }
   
-  // Fallback
+  // Fallback: return null values
   return {
     fileName: null,
     lineNumber: null,
     columnNumber: null,
     componentName: null,
-    jsxCode: reconstructJSX(element),
   };
 }
 
 export function Inspector() {
   const [active, setActive] = useState(false);
   
+  // Direct DOM refs for 60fps performance
   const hoverOverlayRef = useRef<HTMLDivElement>(null);
   const hoverLabelRef = useRef<HTMLDivElement>(null);
   
@@ -360,10 +350,11 @@ export function Inspector() {
     }
 
     const rect = target.getBoundingClientRect();
-    const padding = 4;
+    const padding = 4; // Add padding inside the outline
     const top = rect.top + window.scrollY - padding;
     const left = rect.left + window.scrollX - padding;
     
+    // Move the blue box
     overlay.style.opacity = "1";
     overlay.style.transform = "scale(1)";
     overlay.style.top = `${top}px`;
@@ -371,11 +362,13 @@ export function Inspector() {
     overlay.style.width = `${rect.width + (padding * 2)}px`;
     overlay.style.height = `${rect.height + (padding * 2)}px`;
 
+    // Update the Tag Name Label
     if (label) {
       const tagName = target.tagName.toLowerCase();
       const componentName = getComponentName(target);
       const displayName = componentName || tagName;
       
+      // Truncate if too long
       label.textContent = displayName.length > 20 
         ? displayName.substring(0, 17) + '...' 
         : displayName;
@@ -406,10 +399,14 @@ export function Inspector() {
       return;
     }
 
+    // Set crosshair cursor when active
+    document.body.style.cursor = "crosshair";
+
     const handleMouseOver = (e: MouseEvent) => {
       e.stopPropagation();
       const target = e.target as HTMLElement;
       
+      // Skip inspector elements and body
       if (target === document.body || 
           target === document.documentElement || 
           target.id?.includes('inspector-') ||
@@ -418,9 +415,10 @@ export function Inspector() {
         return;
       }
 
-      target.style.cursor = "default";
+      target.style.cursor = "crosshair";
       hoverTargetRef.current = target;
 
+      // If hovering over the selected item, hide the hover overlay
       if (target !== selectedTargetRef.current) {
         updateOverlay(hoverOverlayRef.current, hoverLabelRef.current, target);
       } else {
@@ -432,6 +430,7 @@ export function Inspector() {
       e.stopPropagation();
       const target = e.target as HTMLElement;
       
+      // Only clear if we're leaving the hovered element
       if (target === hoverTargetRef.current) {
         hoverTargetRef.current = null;
         updateOverlay(hoverOverlayRef.current, hoverLabelRef.current, null);
@@ -444,6 +443,7 @@ export function Inspector() {
       e.stopPropagation();
       const target = e.target as HTMLElement;
 
+      // Skip inspector elements
       if (target.id?.includes('inspector-') ||
           target.closest('#inspector-hover-overlay') ||
           target.closest('#inspector-selected-overlay')) {
@@ -451,13 +451,20 @@ export function Inspector() {
       }
 
       selectedTargetRef.current = target;
+
+      // Move "Selected" Overlay & Label
       updateOverlay(selectedOverlayRef.current, selectedLabelRef.current, target);
+      
+      // Hide Hover overlay
       updateOverlay(hoverOverlayRef.current, hoverLabelRef.current, null);
 
-      // Extract source information (synchronous - no API calls!)
+      // Extract source information
       const source = getReactSource(target);
+      
+      // Extract element signature for code matching
       const signature = extractElementSignature(target);
 
+      // Get className
       let className = "";
       if (typeof target.className === 'string') {
         className = target.className;
@@ -467,23 +474,17 @@ export function Inspector() {
         className = target.getAttribute("class") || "";
       }
 
+      // Get safe text content
       const safeText = (target.innerText || target.textContent || "").trim();
 
-      console.log('📦 Element Selected:', {
-        fileName: source.fileName,
-        lineNumber: source.lineNumber,
-        componentName: source.componentName,
-        jsxCode: source.jsxCode,
-      });
-
-      // Send comprehensive element data INCLUDING RECONSTRUCTED JSX to parent
+      // Send comprehensive element data to parent
       window.parent.postMessage({
         type: 'ELEMENT_SELECTED',
         // Basic info
         tagName: target.tagName.toLowerCase(),
         className: className,
         innerText: safeText.substring(0, 200),
-        outerHTML: target.outerHTML.substring(0, 500),
+        outerHTML: target.outerHTML.substring(0, 500), // Limit size
         
         // Source location
         fileName: source.fileName,
@@ -491,10 +492,7 @@ export function Inspector() {
         columnNumber: source.columnNumber,
         componentName: source.componentName,
         
-        // 🎉 RECONSTRUCTED JSX CODE (no API needed!)
-        jsxCode: source.jsxCode,
-        
-        // Element signature
+        // Element signature for code matching
         signature: {
           tagName: signature.tagName,
           className: signature.className,
@@ -504,6 +502,7 @@ export function Inspector() {
           computedStyles: signature.computedStyles,
         },
         
+        // Additional metadata
         code: target.outerHTML.substring(0, 1000),
         rect: {
           top: target.getBoundingClientRect().top,
@@ -514,11 +513,13 @@ export function Inspector() {
       }, '*');
     };
 
+    // Use capture phase to catch events early
     document.addEventListener("mouseover", handleMouseOver, true);
     document.addEventListener("mouseout", handleMouseOut, true);
     document.addEventListener("click", handleClick, true);
 
     return () => {
+      document.body.style.cursor = "default";
       document.removeEventListener("mouseover", handleMouseOver, true);
       document.removeEventListener("mouseout", handleMouseOut, true);
       document.removeEventListener("click", handleClick, true);
@@ -529,7 +530,7 @@ export function Inspector() {
 
   return (
     <>
-      {/* Hover Overlay */}
+      {/* --- HOVER OVERLAY (Dashed + Label) --- */}
       <div 
         ref={hoverOverlayRef}
         id="inspector-hover-overlay"
@@ -539,15 +540,15 @@ export function Inspector() {
           left: 0,
           pointerEvents: "none",
           zIndex: 999998,
-          outline: "2px dashed #3b82f6",
-          outlineOffset: "0px",
-          backgroundColor: "rgba(59, 130, 246, 0.08)",
+          border: "1px dashed #3b82f6",
+          backgroundColor: "transparent",
           transition: "all 0.15s cubic-bezier(0.4, 0, 0.2, 1)",
           opacity: 0,
-          borderRadius: "4px",
           willChange: "transform, opacity",
+          userSelect: "none",
         }}
       >
+        {/* Label sits INSIDE so it glides with the box */}
         <div 
           ref={hoverLabelRef}
           style={{
@@ -557,19 +558,18 @@ export function Inspector() {
             background: "#3b82f6",
             color: "white",
             fontSize: "11px",
-            fontFamily: "Inter, system-ui, sans-serif",
+            fontFamily: "Inter",
             padding: "4px 6px",
-            borderRadius: "3px",
             pointerEvents: "none",
             whiteSpace: "nowrap",
-            marginBottom: "4px",
-            fontWeight: "500",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+            marginBottom: "12px",
+            fontWeight: "400",
+            userSelect: "none",
           }}
         />
       </div>
 
-      {/* Selected Overlay */}
+      {/* --- SELECTED OVERLAY (Solid + Label) --- */}
       <div 
         ref={selectedOverlayRef}
         id="inspector-selected-overlay"
@@ -579,14 +579,12 @@ export function Inspector() {
           left: 0,
           pointerEvents: "none",
           zIndex: 999999,
-          outline: "3px solid #2563eb",
-          outlineOffset: "0px",
-          backgroundColor: "rgba(37, 99, 235, 0.05)",
+          border: "1px solid #2563eb",
+          backgroundColor: "transparent",
           transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
           opacity: 0,
-          borderRadius: "4px",
           willChange: "transform, opacity",
-          boxShadow: "0 0 0 1px rgba(37, 99, 235, 0.1)",
+          userSelect: "none",
         }}
       >
         <div 
@@ -598,14 +596,13 @@ export function Inspector() {
             background: "#2563eb",
             color: "white",
             fontSize: "12px",
-            fontWeight: "600",
-            fontFamily: "Inter, system-ui, sans-serif",
+            fontWeight: "400",
+            fontFamily: "Inter",
             padding: "3px 8px",
-            borderRadius: "4px",
             pointerEvents: "none",
             whiteSpace: "nowrap",
-            marginBottom: "4px",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+            marginBottom: "12px",
+            userSelect: "none",
           }}
         />
       </div>
