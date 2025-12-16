@@ -8,6 +8,7 @@ export interface DomIdMapping {
   lineNumber: number;
   columnNumber: number;
   absolutePath?: string;
+  jsxCode?: string; // The actual React/JSX code for this element
 }
 
 let domIdMap: Record<string, DomIdMapping> | null = null;

@@ -9,6 +9,7 @@ const fs = require('fs');
 // Global counter for unique IDs
 let idCounter = 0;
 const domIdMap = {};
+const currentFileSource = {}; // Store current file source code by filename
 
 // Ensure the .next directory exists
 const ensureNextDir = () => {
@@ -46,8 +47,36 @@ const saveMapping = () => {
 // Initialize: load existing mapping
 loadExistingMapping();
 
+// Extract JSX code for an element from source
+function extractJSXCode(sourceCode, startLoc, endLoc) {
+  if (!startLoc || !endLoc || !sourceCode) {
+    return null;
+  }
+  
+  // Convert line/column to character index
+  const lines = sourceCode.split('\n');
+  let startIndex = 0;
+  let endIndex = 0;
+  
+  // Calculate start index
+  for (let i = 0; i < startLoc.line - 1; i++) {
+    startIndex += lines[i].length + 1; // +1 for newline
+  }
+  startIndex += startLoc.column;
+  
+  // Calculate end index
+  for (let i = 0; i < endLoc.line - 1; i++) {
+    endIndex += lines[i].length + 1; // +1 for newline
+  }
+  endIndex += endLoc.column;
+  
+  // Extract the JSX code
+  const jsxCode = sourceCode.substring(startIndex, endIndex).trim();
+  return jsxCode || null;
+}
+
 // Generate a unique domId based on file path and line number
-function generateDomId(state, node) {
+function generateDomId(state, node, jsxElementPath) {
   const filename = state.file.opts.filename || 'unknown';
   const relativePath = path.relative(process.cwd(), filename).replace(/\\/g, '/');
   const loc = node.loc;
@@ -63,12 +92,25 @@ function generateDomId(state, node) {
   const baseId = `${relativePath}:${line}:${column}`.replace(/[^a-zA-Z0-9:._-]/g, '_');
   const domId = `dom-${baseId}-${++idCounter}`;
   
+  // Extract JSX code for this element
+  let jsxCode = null;
+  if (jsxElementPath && currentFileSource[filename]) {
+    const sourceCode = currentFileSource[filename];
+    const startLoc = jsxElementPath.node.loc?.start;
+    const endLoc = jsxElementPath.node.loc?.end;
+    
+    if (startLoc && endLoc) {
+      jsxCode = extractJSXCode(sourceCode, startLoc, endLoc);
+    }
+  }
+  
   // Store mapping
   domIdMap[domId] = {
     fileName: relativePath,
     lineNumber: line,
     columnNumber: column,
     absolutePath: filename,
+    jsxCode: jsxCode, // Store the actual JSX code
   };
   
   return domId;
@@ -103,8 +145,20 @@ module.exports = function ({ types: t }) {
           return;
         }
         
-        // Generate domId
-        const domId = generateDomId(state, path.node);
+        // Check if parent is a JSXElement (full element) or if it's self-closing
+        const parent = path.parent;
+        let jsxElementPath = null;
+        
+        if (parent && parent.type === 'JSXElement') {
+          // Full element with opening and closing tags - use parent for full JSX code
+          jsxElementPath = path.parentPath;
+        } else {
+          // Self-closing element - use the opening element itself
+          jsxElementPath = path;
+        }
+        
+        // Generate domId with the JSX element path for code extraction
+        const domId = generateDomId(state, path.node, jsxElementPath);
         
         // Create the data-dom-id attribute
         const domIdAttr = t.jsxAttribute(
@@ -120,10 +174,29 @@ module.exports = function ({ types: t }) {
         enter(path, state) {
           // Load existing mapping when starting a file
           loadExistingMapping();
+          
+          // Read and store the source file content for JSX extraction
+          const filename = state.file.opts.filename || 'unknown';
+          if (filename !== 'unknown') {
+            try {
+              if (fs.existsSync(filename)) {
+                const sourceCode = fs.readFileSync(filename, 'utf-8');
+                currentFileSource[filename] = sourceCode;
+              }
+            } catch (e) {
+              // Silently fail if we can't read the file
+            }
+          }
         },
         exit(path, state) {
           // Save mapping when we finish processing a file
           saveMapping();
+          
+          // Clean up source code for this file
+          const filename = state.file.opts.filename || 'unknown';
+          if (filename !== 'unknown') {
+            delete currentFileSource[filename];
+          }
         }
       }
     }

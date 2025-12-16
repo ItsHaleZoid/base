@@ -8,6 +8,7 @@ interface ElementSource {
   lineNumber: number | null;
   columnNumber: number | null;
   componentName?: string | null;
+  jsxCode?: string | null; // The actual React/JSX code for this element
 }
 
 interface ElementSignature {
@@ -50,6 +51,7 @@ function getSourceFromDomIdAttribute(element: HTMLElement): ElementSource | null
           fileName: mapping.fileName,
           lineNumber: mapping.lineNumber,
           columnNumber: mapping.columnNumber,
+          jsxCode: mapping.jsxCode || null,
         };
       }
     }
@@ -533,6 +535,7 @@ export function Inspector() {
         lineNumber: source.lineNumber,
         columnNumber: source.columnNumber,
         componentName: source.componentName,
+        jsxCode: source.jsxCode || null, // The actual React/JSX code (not HTML/CSS)
         
         // Element signature for code matching
         signature: {
