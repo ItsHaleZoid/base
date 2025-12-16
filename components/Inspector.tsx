@@ -1,106 +1,29 @@
 "use client";
-import { useEffect, useState, useRef, useCallback } from "react";
-import { getSourceFromDomId, preloadDomIdMap } from "@/lib/dom-id-map";
-
-// --- Types ---
-interface ElementSource {
-  fileName: string | null;
-  lineNumber: number | null;
-  columnNumber: number | null;
-  componentName?: string | null;
-}
-
-interface ElementSignature {
-  tagName: string;
-  className: string;
-  id: string;
-  textContent: string;
-  innerHTML: string;
-  outerHTML: string;
-  attributes: Record<string, string>;
-  computedStyles?: {
-    fontSize?: string;
-    color?: string;
-    backgroundColor?: string;
-    fontWeight?: string;
-    textAlign?: string;
-  };
-}
-
-interface InspectedElement {
-  element: HTMLElement;
-  source: ElementSource;
-  signature: ElementSignature;
-}
-
-// --- HELPER: Extract source from domId (highest priority) ---
-function getSourceFromDomIdAttribute(element: HTMLElement): ElementSource | null {
-  let current: HTMLElement | null = element;
-  let depth = 0;
-  const maxDepth = 10;
-  
-  while (current && depth < maxDepth) {
-    // Check for data-dom-id attribute (injected by Babel plugin)
-    const domId = current.getAttribute('data-dom-id');
-    
-    if (domId) {
-      const mapping = getSourceFromDomId(domId);
-      if (mapping) {
-        return {
-          fileName: mapping.fileName,
-          lineNumber: mapping.lineNumber,
-          columnNumber: mapping.columnNumber,
-        };
-      }
-    }
-    
-    current = current.parentElement;
-    depth++;
-  }
-  return null;
-}
+import { useEffect, useState, useRef } from "react";
 
 // --- HELPER: Extract source from data attributes ---
-function getSourceFromDataAttributes(element: HTMLElement): ElementSource | null {
+function getSourceFromDataAttributes(element: HTMLElement) {
   let current: HTMLElement | null = element;
-  let depth = 0;
-  const maxDepth = 10;
-  
-  while (current && depth < maxDepth) {
-    // Check for new inspector attributes
-    const relativePath = current.getAttribute('data-inspector-relative-path') || 
-                        current.getAttribute('data-file-path') ||
-                        current.getAttribute('data-source-file');
-    const line = current.getAttribute('data-inspector-line') || 
-                current.getAttribute('data-line-number') ||
-                current.getAttribute('data-source-line');
-    const column = current.getAttribute('data-inspector-column') ||
-                  current.getAttribute('data-column-number') ||
-                  current.getAttribute('data-source-column');
-    
-    if (relativePath) {
+  while (current) {
+    const relativePath = current.getAttribute('data-inspector-relative-path');
+    const line = current.getAttribute('data-inspector-line');
+    if (relativePath && line) {
       return {
         fileName: relativePath,
-        lineNumber: line ? parseInt(line, 10) : null,
-        columnNumber: column ? parseInt(column, 10) : null,
+        lineNumber: parseInt(line, 10),
+        columnNumber: undefined
       };
     }
-    
-    // Legacy data attributes
     const dataFile = current.getAttribute('data-file');
     const dataLine = current.getAttribute('data-line');
-    const dataColumn = current.getAttribute('data-column');
-    
     if (dataFile) {
       return {
         fileName: dataFile,
-        lineNumber: dataLine ? parseInt(dataLine, 10) : null,
-        columnNumber: dataColumn ? parseInt(dataColumn, 10) : null,
+        lineNumber: dataLine ? parseInt(dataLine, 10) : undefined,
+        columnNumber: undefined
       };
     }
-    
     current = current.parentElement;
-    depth++;
   }
   return null;
 }
@@ -109,255 +32,77 @@ function getSourceFromDataAttributes(element: HTMLElement): ElementSource | null
 function getComponentName(element: HTMLElement): string | null {
   try {
     const keys = Object.keys(element);
-    const fiberKey = keys.find((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
-    
+    const fiberKey = keys.find((k) => k.startsWith("__reactFiber$"));
     if (fiberKey) {
       // @ts-ignore
       let fiber = element[fiberKey];
       let current = fiber;
       let depth = 0;
-      const maxDepth = 30;
-      
-      while (current && depth < maxDepth) {
-        // Check for React 18+ structure
+      while (current && depth < 20) {
         if (current.type) {
           if (typeof current.type === 'function') {
-            return current.type.name || current.type.displayName || current.type.$$typeof?.toString() || 'Anonymous';
+            return current.type.name || current.type.displayName || 'Anonymous';
           }
           if (typeof current.type === 'string') {
             return current.type;
           }
-          // Check for forwardRef
-          if (current.type.render) {
-            return current.type.render.name || current.type.render.displayName || 'ForwardRef';
-          }
         }
-        
-        // Check for _debugSource (React DevTools)
-        if (current._debugSource) {
-          return current._debugSource.fileName || null;
-        }
-        
-        // Check for memoized component
-        if (current.memoizedState) {
-          const state = current.memoizedState;
-          if (state.element?.type) {
-            const type = state.element.type;
-            if (typeof type === 'function') {
-              return type.name || type.displayName || null;
-            }
-          }
-        }
-        
-        current = current.return || current._owner;
+        current = current.return;
         depth++;
       }
     }
-  } catch (err) {
-    // Silently fail - this is expected in some environments
-  }
-  return null;
-}
-
-// --- HELPER: Extract React DevTools source info ---
-function getReactDevToolsSource(element: HTMLElement): ElementSource | null {
-  try {
-    const keys = Object.keys(element);
-    const fiberKey = keys.find((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
-    
-    if (fiberKey) {
-      // @ts-ignore
-      let fiber = element[fiberKey];
-      let current = fiber;
-      let depth = 0;
-      const maxDepth = 30;
-      
-      while (current && depth < maxDepth) {
-        // React DevTools stores source info here
-        if (current._debugSource) {
-          return {
-            fileName: current._debugSource.fileName || null,
-            lineNumber: current._debugSource.lineNumber || null,
-            columnNumber: current._debugSource.columnNumber || null,
-            componentName: getComponentName(element),
-          };
-        }
-        
-        // Check parent fibers
-        current = current.return || current._owner;
-        depth++;
-      }
-    }
-  } catch (err) {
-    // Silently fail
-  }
+  } catch (err) {}
   return null;
 }
 
 // --- HELPER: Parse stack trace ---
-function getSourceFromStackTrace(): ElementSource | null {
+function getSourceFromStackTrace(): { fileName: string; lineNumber: number } | null {
   try {
     const error = new Error();
     if (!error.stack) return null;
-    
     const lines = error.stack.split('\n');
-    const skipPatterns = [
-      'node_modules/react',
-      'node_modules/next',
-      'Inspector',
-      'at Object.',
-      'at eval',
-    ];
-    
     for (const line of lines) {
-      // Skip framework code
-      if (skipPatterns.some(pattern => line.includes(pattern))) continue;
-      
-      // Match various stack trace formats
-      const patterns = [
-        /at\s+.*?\s*\((.+?):(\d+):(\d+)\)/,
-        /(@|at\s+)(.+?):(\d+):(\d+)/,
-        /\((.+?):(\d+):(\d+)\)/,
-      ];
-      
-      for (const pattern of patterns) {
-        const match = line.match(pattern);
-        if (match) {
-          const fileName = match[1] || match[2] || match[3];
-          const lineNum = match[2] || match[3] || match[4];
-          const colNum = match[3] || match[4] || match[5];
-          
-          if (fileName && !fileName.includes('node_modules') && !fileName.includes('webpack')) {
-            return {
-              fileName: fileName.trim(),
-              lineNumber: lineNum ? parseInt(lineNum, 10) : null,
-              columnNumber: colNum ? parseInt(colNum, 10) : null,
-            };
-          }
-        }
+      if (line.includes('node_modules/react') || line.includes('Inspector')) continue;
+      const match = line.match(/at\s+.*?\s*\((.+?):(\d+):(\d+)\)/) || line.match(/(@|at\s+)(.+?):(\d+):(\d+)/);
+      if (match) {
+        const fileName = match[1] || match[2];
+        if (fileName && !fileName.includes('node_modules')) return { fileName, lineNumber: parseInt(match[2] || match[3], 10) };
       }
     }
-  } catch (err) {
-    // Silently fail
-  }
+  } catch (err) {}
   return null;
 }
 
-// --- HELPER: Extract element signature for code matching ---
-function extractElementSignature(element: HTMLElement): ElementSignature {
-  const tagName = element.tagName.toLowerCase();
-  
-  // Get className
-  let className = "";
-  if (typeof element.className === 'string') {
-    className = element.className;
-  } else if ((element.className as any)?.baseVal) {
-    // SVG elements
-    className = (element.className as any).baseVal;
-  } else if (element.getAttribute) {
-    className = element.getAttribute("class") || "";
-  }
-  
-  // Get ID
-  const id = element.id || element.getAttribute("id") || "";
-  
-  // Get text content (normalized)
-  const textContent = (element.innerText || element.textContent || "")
-    .trim()
-    .replace(/\s+/g, ' ')
-    .substring(0, 200); // Limit length
-  
-  // Get HTML
-  const innerHTML = element.innerHTML || "";
-  const outerHTML = element.outerHTML || "";
-  
-  // Extract all attributes
-  const attributes: Record<string, string> = {};
-  if (element.attributes) {
-    for (let i = 0; i < element.attributes.length; i++) {
-      const attr = element.attributes[i];
-      attributes[attr.name] = attr.value;
-    }
-  }
-  
-  // Get computed styles (useful for matching)
-  const computedStyles: ElementSignature['computedStyles'] = {};
-  try {
-    const styles = window.getComputedStyle(element);
-    computedStyles.fontSize = styles.fontSize;
-    computedStyles.color = styles.color;
-    computedStyles.backgroundColor = styles.backgroundColor;
-    computedStyles.fontWeight = styles.fontWeight;
-    computedStyles.textAlign = styles.textAlign;
-  } catch (err) {
-    // Cross-origin or other issues
-  }
-  
-  return {
-    tagName,
-    className,
-    id,
-    textContent,
-    innerHTML,
-    outerHTML,
-    attributes,
-    computedStyles,
-  };
-}
-
 // --- MAIN SOURCE FINDER ---
-function getReactSource(element: HTMLElement): ElementSource {
-  // Priority 1: domId mapping (most reliable - injected at build time)
-  const domIdSource = getSourceFromDomIdAttribute(element);
-  if (domIdSource && domIdSource.fileName) {
-    return {
-      ...domIdSource,
-      componentName: getComponentName(element),
-    };
-  }
-  
-  // Priority 2: Data attributes
+function getReactSource(element: HTMLElement) {
   const dataAttrSource = getSourceFromDataAttributes(element);
-  if (dataAttrSource && dataAttrSource.fileName) {
-    return {
-      ...dataAttrSource,
-      componentName: getComponentName(element),
-    };
-  }
+  if (dataAttrSource) return dataAttrSource;
   
-  // Priority 3: React DevTools source
-  const devToolsSource = getReactDevToolsSource(element);
-  if (devToolsSource && devToolsSource.fileName) {
-    return devToolsSource;
-  }
-  
-  // Priority 4: Stack trace (fallback)
-  const stackSource = getSourceFromStackTrace();
-  if (stackSource && stackSource.fileName) {
-    return {
-      ...stackSource,
-      componentName: getComponentName(element),
-    };
-  }
-  
-  // Priority 5: Component name only
   const componentName = getComponentName(element);
-  if (componentName) {
-    return {
-      fileName: `<${componentName}>`,
-      lineNumber: null,
-      columnNumber: null,
-      componentName,
-    };
-  }
+  const stackSource = getSourceFromStackTrace();
+  if (stackSource) return stackSource;
   
-  // Fallback: return null values
-  return {
-    fileName: null,
-    lineNumber: null,
-    columnNumber: null,
-    componentName: null,
-  };
+  // Legacy React 18 check
+  try {
+    let current: HTMLElement | null = element;
+    let attempts = 0;
+    while (current && attempts < 30) {
+      attempts++;
+      const keys = Object.keys(current);
+      const fiberKey = keys.find((k) => k.startsWith("__reactFiber$"));
+      if (fiberKey) {
+        // @ts-ignore
+        let fiber = current[fiberKey];
+        while (fiber) {
+          if (fiber._debugSource) return fiber._debugSource;
+          fiber = fiber.return;
+        }
+      }
+      current = current.parentElement;
+    }
+  } catch (err) {}
+  
+  return componentName ? { fileName: `<${componentName}>`, lineNumber: null, columnNumber: null } : null;
 }
 
 export function Inspector() {
@@ -371,14 +116,8 @@ export function Inspector() {
   const selectedLabelRef = useRef<HTMLDivElement>(null);
   
   const selectedTargetRef = useRef<HTMLElement | null>(null);
-  const hoverTargetRef = useRef<HTMLElement | null>(null);
 
-  // Preload domId mapping on mount
-  useEffect(() => {
-    preloadDomIdMap();
-  }, []);
-
-  const updateOverlay = useCallback((
+  const updateOverlay = (
     overlay: HTMLDivElement | null, 
     label: HTMLDivElement | null,
     target: HTMLElement | null
@@ -392,46 +131,40 @@ export function Inspector() {
     }
 
     const rect = target.getBoundingClientRect();
-    const padding = 4; // Add padding inside the outline
-    const top = rect.top + window.scrollY - padding;
-    const left = rect.left + window.scrollX - padding;
+    const top = rect.top + window.scrollY;
+    const left = rect.left + window.scrollX;
     
     // Move the blue box
     overlay.style.opacity = "1";
     overlay.style.transform = "scale(1)";
     overlay.style.top = `${top}px`;
     overlay.style.left = `${left}px`;
-    overlay.style.width = `${rect.width + (padding * 2)}px`;
-    overlay.style.height = `${rect.height + (padding * 2)}px`;
+    overlay.style.width = `${rect.width}px`;
+    overlay.style.height = `${rect.height}px`;
 
-    // Update the Tag Name Label
+    // Update the Tag Name Label (e.g. "div" or "button")
     if (label) {
       const tagName = target.tagName.toLowerCase();
       const componentName = getComponentName(target);
-      const displayName = componentName || tagName;
-      
-      // Truncate if too long
-      label.textContent = displayName.length > 20 
-        ? displayName.substring(0, 17) + '...' 
-        : displayName;
+      // Show "Button" if component name exists, otherwise "button"
+      label.textContent = componentName ? componentName : tagName;
     }
-  }, []);
+  };
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === "TOGGLE_INSPECT") {
         setActive(event.data.isInspectMode);
         if (!event.data.isInspectMode) {
-          selectedTargetRef.current = null;
-          hoverTargetRef.current = null;
-          updateOverlay(hoverOverlayRef.current, hoverLabelRef.current, null);
-          updateOverlay(selectedOverlayRef.current, selectedLabelRef.current, null);
+           selectedTargetRef.current = null;
+           updateOverlay(hoverOverlayRef.current, hoverLabelRef.current, null);
+           updateOverlay(selectedOverlayRef.current, selectedLabelRef.current, null);
         }
       }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [updateOverlay]);
+  }, []);
 
   useEffect(() => {
     if (!active) {
@@ -441,24 +174,14 @@ export function Inspector() {
       return;
     }
 
-    // Set crosshair cursor when active
-    document.body.style.cursor = "crosshair";
-
     const handleMouseOver = (e: MouseEvent) => {
       e.stopPropagation();
       const target = e.target as HTMLElement;
       
-      // Skip inspector elements and body
-      if (target === document.body || 
-          target === document.documentElement || 
-          target.id?.includes('inspector-') ||
-          target.closest('#inspector-hover-overlay') ||
-          target.closest('#inspector-selected-overlay')) {
-        return;
-      }
+      if (target === document.body || target === document.documentElement || 
+          target.id.includes('inspector-')) return;
 
-      target.style.cursor = "crosshair";
-      hoverTargetRef.current = target;
+      target.style.cursor = "default";
 
       // If hovering over the selected item, hide the hover overlay
       if (target !== selectedTargetRef.current) {
@@ -470,13 +193,7 @@ export function Inspector() {
 
     const handleMouseOut = (e: MouseEvent) => {
       e.stopPropagation();
-      const target = e.target as HTMLElement;
-      
-      // Only clear if we're leaving the hovered element
-      if (target === hoverTargetRef.current) {
-        hoverTargetRef.current = null;
-        updateOverlay(hoverOverlayRef.current, hoverLabelRef.current, null);
-      }
+      updateOverlay(hoverOverlayRef.current, hoverLabelRef.current, null);
     };
 
     const handleClick = (e: MouseEvent) => {
@@ -484,13 +201,6 @@ export function Inspector() {
       e.preventDefault();
       e.stopPropagation();
       const target = e.target as HTMLElement;
-
-      // Skip inspector elements
-      if (target.id?.includes('inspector-') ||
-          target.closest('#inspector-hover-overlay') ||
-          target.closest('#inspector-selected-overlay')) {
-        return;
-      }
 
       selectedTargetRef.current = target;
 
@@ -500,73 +210,41 @@ export function Inspector() {
       // Hide Hover overlay
       updateOverlay(hoverOverlayRef.current, hoverLabelRef.current, null);
 
-      // Extract source information
       const source = getReactSource(target);
-      
-      // Extract element signature for code matching
-      const signature = extractElementSignature(target);
+      console.log("🎯 Selected:", target);
 
-      // Get className
       let className = "";
       if (typeof target.className === 'string') {
         className = target.className;
-      } else if ((target.className as any)?.baseVal) {
-        className = (target.className as any).baseVal;
       } else if (target.getAttribute) {
         className = target.getAttribute("class") || "";
       }
 
-      // Get safe text content
-      const safeText = (target.innerText || target.textContent || "").trim();
+      const safeText = target.innerText || target.textContent || "";
 
-      // Send comprehensive element data to parent
       window.parent.postMessage({
         type: 'ELEMENT_SELECTED',
-        // Basic info
         tagName: target.tagName.toLowerCase(),
+        fileName: source?.fileName || null,
+        lineNumber: source?.lineNumber || null,
+        columnNumber: source?.columnNumber || null,
+        code: target.outerHTML,
         className: className,
-        innerText: safeText.substring(0, 200),
-        outerHTML: target.outerHTML.substring(0, 500), // Limit size
-        
-        // Source location
-        fileName: source.fileName,
-        lineNumber: source.lineNumber,
-        columnNumber: source.columnNumber,
-        componentName: source.componentName,
-        
-        // Element signature for code matching
-        signature: {
-          tagName: signature.tagName,
-          className: signature.className,
-          id: signature.id,
-          textContent: signature.textContent,
-          attributes: signature.attributes,
-          computedStyles: signature.computedStyles,
-        },
-        
-        // Additional metadata
-        code: target.outerHTML.substring(0, 1000),
-        rect: {
-          top: target.getBoundingClientRect().top,
-          left: target.getBoundingClientRect().left,
-          width: target.getBoundingClientRect().width,
-          height: target.getBoundingClientRect().height,
-        },
+        innerText: safeText.substring(0, 100),
+        componentName: getComponentName(target)
       }, '*');
     };
 
-    // Use capture phase to catch events early
     document.addEventListener("mouseover", handleMouseOver, true);
     document.addEventListener("mouseout", handleMouseOut, true);
     document.addEventListener("click", handleClick, true);
 
     return () => {
-      document.body.style.cursor = "default";
       document.removeEventListener("mouseover", handleMouseOver, true);
       document.removeEventListener("mouseout", handleMouseOut, true);
       document.removeEventListener("click", handleClick, true);
     };
-  }, [active, updateOverlay]);
+  }, [active]);
 
   if (!active) return null;
 
@@ -582,12 +260,11 @@ export function Inspector() {
           left: 0,
           pointerEvents: "none",
           zIndex: 999998,
-          border: "1px dashed #3b82f6",
-          backgroundColor: "transparent",
+          border: "2px dashed #3b82f6",
+          backgroundColor: "rgba(59, 130, 246, 0.1)",
           transition: "all 0.15s cubic-bezier(0.4, 0, 0.2, 1)",
           opacity: 0,
-          willChange: "transform, opacity",
-          userSelect: "none",
+          borderRadius: "4px"
         }}
       >
         {/* Label sits INSIDE so it glides with the box */}
@@ -601,12 +278,10 @@ export function Inspector() {
             color: "white",
             fontSize: "11px",
             fontFamily: "Inter",
-            padding: "4px 6px",
+            padding: "4px",
             pointerEvents: "none",
             whiteSpace: "nowrap",
-            marginBottom: "12px",
-            fontWeight: "400",
-            userSelect: "none",
+            marginBottom: "4px"
           }}
         />
       </div>
@@ -621,30 +296,29 @@ export function Inspector() {
           left: 0,
           pointerEvents: "none",
           zIndex: 999999,
-          border: "1px solid #2563eb",
-          backgroundColor: "transparent",
+          border: "2px solid #3b82f6",
+          backgroundColor: "rgba(59, 130, 246, 0.05)",
           transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
           opacity: 0,
-          willChange: "transform, opacity",
-          userSelect: "none",
+          padding: "4px",
         }}
       >
         <div 
           ref={selectedLabelRef}
           style={{
             position: "absolute",
-            top: "-26px",
+            top: "-24px", // Slightly higher for hierarchy
             left: "-3px",
-            background: "#2563eb",
+            background: "#2563eb", // Darker blue for selected state
             color: "white",
             fontSize: "12px",
-            fontWeight: "400",
+            fontWeight: "medium",
             fontFamily: "Inter",
-            padding: "3px 8px",
+            padding: "2px 8px",
+            borderRadius: "3px",
             pointerEvents: "none",
             whiteSpace: "nowrap",
-            marginBottom: "12px",
-            userSelect: "none",
+            marginBottom: "4px"
           }}
         />
       </div>
