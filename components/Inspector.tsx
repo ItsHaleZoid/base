@@ -27,10 +27,20 @@ interface ElementSignature {
   };
 }
 
-interface InspectedElement {
-  element: HTMLElement;
-  source: ElementSource;
-  signature: ElementSignature;
+
+// --- HELPER: Parse domId string to extract file, line, column ---
+function parseDomId(domId: string): ElementSource | null {
+  // Format: "dom-app_page.tsx:4:6-5" or "dom-app/page.tsx:4:6-5"
+  // Extract: fileName, lineNumber, columnNumber from the domId string
+  const match = domId.match(/^dom-(.+?):(\d+):(\d+)-/);
+  if (match) {
+    return {
+      fileName: match[1],
+      lineNumber: parseInt(match[2], 10),
+      columnNumber: parseInt(match[3], 10),
+    };
+  }
+  return null;
 }
 
 // --- HELPER: Extract source from domId (highest priority) ---
@@ -44,13 +54,21 @@ function getSourceFromDomIdAttribute(element: HTMLElement): ElementSource | null
     const domId = current.getAttribute('data-dom-id');
     
     if (domId) {
+      // First try to get from the loaded mapping (most accurate)
       const mapping = getSourceFromDomId(domId);
-      if (mapping) {
+      if (mapping && mapping.fileName && mapping.lineNumber !== null && mapping.lineNumber !== undefined) {
         return {
           fileName: mapping.fileName,
           lineNumber: mapping.lineNumber,
           columnNumber: mapping.columnNumber,
         };
+      }
+      
+      // Fallback: parse the domId string directly if mapping isn't loaded yet
+      // This ensures we still get line numbers even if the API hasn't loaded
+      const parsed = parseDomId(domId);
+      if (parsed && parsed.fileName) {
+        return parsed;
       }
     }
     
@@ -392,17 +410,16 @@ export function Inspector() {
     }
 
     const rect = target.getBoundingClientRect();
-    const padding = 4; // Add padding inside the outline
-    const top = rect.top + window.scrollY - padding;
-    const left = rect.left + window.scrollX - padding;
+    const top = rect.top + window.scrollY;
+    const left = rect.left + window.scrollX;
     
     // Move the blue box
     overlay.style.opacity = "1";
     overlay.style.transform = "scale(1)";
     overlay.style.top = `${top}px`;
     overlay.style.left = `${left}px`;
-    overlay.style.width = `${rect.width + (padding * 2)}px`;
-    overlay.style.height = `${rect.height + (padding * 2)}px`;
+    overlay.style.width = `${rect.width}px`;
+    overlay.style.height = `${rect.height}px`;
 
     // Update the Tag Name Label
     if (label) {
@@ -506,16 +523,6 @@ export function Inspector() {
       // Extract element signature for code matching
       const signature = extractElementSignature(target);
 
-      // Get className
-      let className = "";
-      if (typeof target.className === 'string') {
-        className = target.className;
-      } else if ((target.className as any)?.baseVal) {
-        className = (target.className as any).baseVal;
-      } else if (target.getAttribute) {
-        className = target.getAttribute("class") || "";
-      }
-
       // Get safe text content
       const safeText = (target.innerText || target.textContent || "").trim();
 
@@ -524,7 +531,7 @@ export function Inspector() {
         type: 'ELEMENT_SELECTED',
         // Basic info
         tagName: target.tagName.toLowerCase(),
-        className: className,
+        className: signature.className,
         innerText: safeText.substring(0, 200),
         outerHTML: target.outerHTML.substring(0, 500), // Limit size
         
@@ -604,7 +611,6 @@ export function Inspector() {
             padding: "4px 6px",
             pointerEvents: "none",
             whiteSpace: "nowrap",
-            marginBottom: "12px",
             fontWeight: "400",
             userSelect: "none",
           }}
@@ -643,7 +649,6 @@ export function Inspector() {
             padding: "3px 8px",
             pointerEvents: "none",
             whiteSpace: "nowrap",
-            marginBottom: "12px",
             userSelect: "none",
           }}
         />
