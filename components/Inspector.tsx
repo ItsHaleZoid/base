@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
+import { getSourceFromDomId, preloadDomIdMap } from "@/lib/dom-id-map";
 
 // --- Types ---
 interface ElementSource {
@@ -30,6 +31,33 @@ interface InspectedElement {
   element: HTMLElement;
   source: ElementSource;
   signature: ElementSignature;
+}
+
+// --- HELPER: Extract source from domId (highest priority) ---
+function getSourceFromDomIdAttribute(element: HTMLElement): ElementSource | null {
+  let current: HTMLElement | null = element;
+  let depth = 0;
+  const maxDepth = 10;
+  
+  while (current && depth < maxDepth) {
+    // Check for data-dom-id attribute (injected by Babel plugin)
+    const domId = current.getAttribute('data-dom-id');
+    
+    if (domId) {
+      const mapping = getSourceFromDomId(domId);
+      if (mapping) {
+        return {
+          fileName: mapping.fileName,
+          lineNumber: mapping.lineNumber,
+          columnNumber: mapping.columnNumber,
+        };
+      }
+    }
+    
+    current = current.parentElement;
+    depth++;
+  }
+  return null;
 }
 
 // --- HELPER: Extract source from data attributes ---
@@ -279,7 +307,16 @@ function extractElementSignature(element: HTMLElement): ElementSignature {
 
 // --- MAIN SOURCE FINDER ---
 function getReactSource(element: HTMLElement): ElementSource {
-  // Priority 1: Data attributes (most reliable)
+  // Priority 1: domId mapping (most reliable - injected at build time)
+  const domIdSource = getSourceFromDomIdAttribute(element);
+  if (domIdSource && domIdSource.fileName) {
+    return {
+      ...domIdSource,
+      componentName: getComponentName(element),
+    };
+  }
+  
+  // Priority 2: Data attributes
   const dataAttrSource = getSourceFromDataAttributes(element);
   if (dataAttrSource && dataAttrSource.fileName) {
     return {
@@ -288,13 +325,13 @@ function getReactSource(element: HTMLElement): ElementSource {
     };
   }
   
-  // Priority 2: React DevTools source
+  // Priority 3: React DevTools source
   const devToolsSource = getReactDevToolsSource(element);
   if (devToolsSource && devToolsSource.fileName) {
     return devToolsSource;
   }
   
-  // Priority 3: Stack trace (fallback)
+  // Priority 4: Stack trace (fallback)
   const stackSource = getSourceFromStackTrace();
   if (stackSource && stackSource.fileName) {
     return {
@@ -303,7 +340,7 @@ function getReactSource(element: HTMLElement): ElementSource {
     };
   }
   
-  // Priority 4: Component name only
+  // Priority 5: Component name only
   const componentName = getComponentName(element);
   if (componentName) {
     return {
@@ -335,6 +372,11 @@ export function Inspector() {
   
   const selectedTargetRef = useRef<HTMLElement | null>(null);
   const hoverTargetRef = useRef<HTMLElement | null>(null);
+
+  // Preload domId mapping on mount
+  useEffect(() => {
+    preloadDomIdMap();
+  }, []);
 
   const updateOverlay = useCallback((
     overlay: HTMLDivElement | null, 
