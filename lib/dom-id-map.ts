@@ -5,9 +5,6 @@
 
 export interface DomIdMapping {
   fileName: string;
-  lineNumber: number;
-  columnNumber: number;
-  absolutePath?: string;
   jsxCode?: string; // The actual React/JSX code for this element
 }
 

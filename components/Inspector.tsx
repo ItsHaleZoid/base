@@ -5,8 +5,6 @@ import { getSourceFromDomId, preloadDomIdMap } from "@/lib/dom-id-map";
 // --- Types ---
 interface ElementSource {
   fileName: string | null;
-  lineNumber: number | null;
-  columnNumber: number | null;
   componentName?: string | null;
   jsxCode?: string | null; // The actual React/JSX code for this element
 }
@@ -49,8 +47,6 @@ function getSourceFromDomIdAttribute(element: HTMLElement): ElementSource | null
       if (mapping) {
         return {
           fileName: mapping.fileName,
-          lineNumber: mapping.lineNumber,
-          columnNumber: mapping.columnNumber,
           jsxCode: mapping.jsxCode || null,
         };
       }
@@ -83,21 +79,15 @@ function getSourceFromDataAttributes(element: HTMLElement): ElementSource | null
     if (relativePath) {
       return {
         fileName: relativePath,
-        lineNumber: line ? parseInt(line, 10) : null,
-        columnNumber: column ? parseInt(column, 10) : null,
       };
     }
     
     // Legacy data attributes
     const dataFile = current.getAttribute('data-file');
-    const dataLine = current.getAttribute('data-line');
-    const dataColumn = current.getAttribute('data-column');
     
     if (dataFile) {
       return {
         fileName: dataFile,
-        lineNumber: dataLine ? parseInt(dataLine, 10) : null,
-        columnNumber: dataColumn ? parseInt(dataColumn, 10) : null,
       };
     }
     
@@ -179,8 +169,6 @@ function getReactDevToolsSource(element: HTMLElement): ElementSource | null {
         if (current._debugSource) {
           return {
             fileName: current._debugSource.fileName || null,
-            lineNumber: current._debugSource.lineNumber || null,
-            columnNumber: current._debugSource.columnNumber || null,
             componentName: getComponentName(element),
           };
         }
@@ -232,8 +220,6 @@ function getSourceFromStackTrace(): ElementSource | null {
           if (fileName && !fileName.includes('node_modules') && !fileName.includes('webpack')) {
             return {
               fileName: fileName.trim(),
-              lineNumber: lineNum ? parseInt(lineNum, 10) : null,
-              columnNumber: colNum ? parseInt(colNum, 10) : null,
             };
           }
         }
@@ -347,8 +333,6 @@ function getReactSource(element: HTMLElement): ElementSource {
   if (componentName) {
     return {
       fileName: `<${componentName}>`,
-      lineNumber: null,
-      columnNumber: null,
       componentName,
     };
   }
@@ -356,8 +340,6 @@ function getReactSource(element: HTMLElement): ElementSource {
   // Fallback: return null values
   return {
     fileName: null,
-    lineNumber: null,
-    columnNumber: null,
     componentName: null,
   };
 }
@@ -532,8 +514,6 @@ export function Inspector() {
         
         // Source location
         fileName: source.fileName,
-        lineNumber: source.lineNumber,
-        columnNumber: source.columnNumber,
         componentName: source.componentName,
         jsxCode: source.jsxCode || null, // The actual React/JSX code (not HTML/CSS)
         

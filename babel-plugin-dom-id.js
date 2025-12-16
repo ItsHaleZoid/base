@@ -107,9 +107,6 @@ function generateDomId(state, node, jsxElementPath) {
   // Store mapping
   domIdMap[domId] = {
     fileName: relativePath,
-    lineNumber: line,
-    columnNumber: column,
-    absolutePath: filename,
     jsxCode: jsxCode, // Store the actual JSX code
   };
   
