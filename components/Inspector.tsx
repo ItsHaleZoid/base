@@ -471,6 +471,40 @@ export function Inspector() {
         }
       }
 
+      // Handle style updates from parent (live preview)
+      if (event.data?.type === "UPDATE_ELEMENT_STYLE") {
+        const { domId, property, cssValue } = event.data;
+
+        if (!domId || !property) {
+          console.warn("[Inspector] UPDATE_ELEMENT_STYLE missing domId or property", event.data);
+          return;
+        }
+
+        const element = document.querySelector(`[data-dom-id="${domId}"]`) as HTMLElement;
+
+        if (element) {
+          // Apply the CSS property directly for instant preview
+          (element.style as any)[property] = cssValue;
+          console.log("[Inspector] ✅ Applied style:", { domId, property, cssValue });
+
+          // Notify parent that style was applied
+          window.parent.postMessage({
+            type: 'STYLE_APPLIED',
+            domId,
+            property,
+            cssValue,
+          }, '*');
+        } else {
+          console.warn("[Inspector] Element not found for domId:", domId);
+          window.parent.postMessage({
+            type: 'STYLE_APPLY_FAILED',
+            domId,
+            property,
+            error: 'Element not found',
+          }, '*');
+        }
+      }
+
       // Handle refresh request from parent
       if (event.data?.type === "GET_SELECTED_ELEMENT") {
         const target = selectedTargetRef.current;
