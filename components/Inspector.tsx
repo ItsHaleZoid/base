@@ -7,6 +7,7 @@ interface ElementSource {
   fileName: string | null;
   componentName?: string | null;
   jsxCode?: string | null; // The actual React/JSX code for this element
+  lineNumber?: number | null; // Line number in source file
 }
 
 interface ElementSignature {
@@ -32,26 +33,38 @@ interface InspectedElement {
   signature: ElementSignature;
 }
 
+// --- HELPER: Extract line number from domId ---
+// domId format: "dom-{relativePath}:{line}:{column}-{counter}"
+function extractLineNumberFromDomId(domId: string): number | null {
+  // Example: "dom-app/page.tsx:5:10-1" -> 5
+  const match = domId.match(/^dom-.*?:(\d+):\d+-\d+$/);
+  if (match) {
+    return parseInt(match[1], 10);
+  }
+  return null;
+}
+
 // --- HELPER: Extract source from domId (highest priority) ---
 function getSourceFromDomIdAttribute(element: HTMLElement): ElementSource | null {
   let current: HTMLElement | null = element;
   let depth = 0;
   const maxDepth = 10;
-  
+
   while (current && depth < maxDepth) {
     // Check for data-dom-id attribute (injected by Babel plugin)
     const domId = current.getAttribute('data-dom-id');
-    
+
     if (domId) {
       const mapping = getSourceFromDomId(domId);
       if (mapping) {
         return {
           fileName: mapping.fileName,
           jsxCode: mapping.jsxCode || null,
+          lineNumber: extractLineNumberFromDomId(domId),
         };
       }
     }
-    
+
     current = current.parentElement;
     depth++;
   }
@@ -401,6 +414,51 @@ export function Inspector() {
     }
   }, []);
 
+  // Helper function to extract and send element data
+  const sendElementData = useCallback((target: HTMLElement, messageType: string) => {
+    const source = getReactSource(target);
+    const signature = extractElementSignature(target);
+
+    // Get className safely
+    let className = "";
+    if (typeof target.className === 'string') {
+      className = target.className;
+    } else if ((target.className as any)?.baseVal) {
+      className = (target.className as any).baseVal;
+    } else if (target.getAttribute) {
+      className = target.getAttribute("class") || "";
+    }
+
+    const safeText = (target.innerText || target.textContent || "").trim();
+
+    window.parent.postMessage({
+      type: messageType,
+      tagName: target.tagName.toLowerCase(),
+      className: className,
+      innerText: safeText.substring(0, 200),
+      outerHTML: target.outerHTML.substring(0, 500),
+      fileName: source.fileName,
+      componentName: source.componentName,
+      jsxCode: source.jsxCode || null,
+      lineNumber: source.lineNumber || null,
+      signature: {
+        tagName: signature.tagName,
+        className: signature.className,
+        id: signature.id,
+        textContent: signature.textContent,
+        attributes: signature.attributes,
+        computedStyles: signature.computedStyles,
+      },
+      code: target.outerHTML.substring(0, 1000),
+      rect: {
+        top: target.getBoundingClientRect().top,
+        left: target.getBoundingClientRect().left,
+        width: target.getBoundingClientRect().width,
+        height: target.getBoundingClientRect().height,
+      },
+    }, '*');
+  }, []);
+
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === "TOGGLE_INSPECT") {
@@ -412,10 +470,59 @@ export function Inspector() {
           updateOverlay(selectedOverlayRef.current, selectedLabelRef.current, null);
         }
       }
+
+      // Handle refresh request from parent
+      if (event.data?.type === "GET_SELECTED_ELEMENT") {
+        const target = selectedTargetRef.current;
+
+        // Check if element still exists in DOM
+        if (!target || !document.contains(target)) {
+          window.parent.postMessage({
+            type: 'ELEMENT_STALE',
+            message: 'Selected element no longer exists in DOM'
+          }, '*');
+          return;
+        }
+
+        // Re-fetch DOM ID map in case it was updated after hot reload
+        preloadDomIdMap().then(() => {
+          sendElementData(target, 'ELEMENT_REFRESHED');
+        });
+      }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [updateOverlay]);
+  }, [updateOverlay, sendElementData]);
+
+  // MutationObserver to watch selected element for changes and auto-send updates
+  useEffect(() => {
+    const target = selectedTargetRef.current;
+    if (!target || !active) return;
+
+    const observer = new MutationObserver((mutations) => {
+      // Check if element still exists
+      if (!document.contains(target)) {
+        window.parent.postMessage({
+          type: 'ELEMENT_STALE',
+          message: 'Selected element was removed from DOM'
+        }, '*');
+        observer.disconnect();
+        return;
+      }
+
+      // Send updated element data
+      sendElementData(target, 'ELEMENT_UPDATED');
+    });
+
+    observer.observe(target, {
+      attributes: true,
+      attributeFilter: ['class', 'style', 'className'],
+      characterData: true,
+      childList: false, // Don't watch children to avoid too many updates
+    });
+
+    return () => observer.disconnect();
+  }, [active, sendElementData, selectedTargetRef.current]);
 
   useEffect(() => {
     if (!active) {
@@ -480,62 +587,12 @@ export function Inspector() {
 
       // Move "Selected" Overlay & Label
       updateOverlay(selectedOverlayRef.current, selectedLabelRef.current, target);
-      
+
       // Hide Hover overlay
       updateOverlay(hoverOverlayRef.current, hoverLabelRef.current, null);
 
-      // Extract source information
-      const source = getReactSource(target);
-      
-      // Extract element signature for code matching
-      const signature = extractElementSignature(target);
-
-      // Get className
-      let className = "";
-      if (typeof target.className === 'string') {
-        className = target.className;
-      } else if ((target.className as any)?.baseVal) {
-        className = (target.className as any).baseVal;
-      } else if (target.getAttribute) {
-        className = target.getAttribute("class") || "";
-      }
-
-      // Get safe text content
-      const safeText = (target.innerText || target.textContent || "").trim();
-
-      // Send comprehensive element data to parent
-      window.parent.postMessage({
-        type: 'ELEMENT_SELECTED',
-        // Basic info
-        tagName: target.tagName.toLowerCase(),
-        className: className,
-        innerText: safeText.substring(0, 200),
-        outerHTML: target.outerHTML.substring(0, 500), // Limit size
-        
-        // Source location
-        fileName: source.fileName,
-        componentName: source.componentName,
-        jsxCode: source.jsxCode || null, // The actual React/JSX code (not HTML/CSS)
-        
-        // Element signature for code matching
-        signature: {
-          tagName: signature.tagName,
-          className: signature.className,
-          id: signature.id,
-          textContent: signature.textContent,
-          attributes: signature.attributes,
-          computedStyles: signature.computedStyles,
-        },
-        
-        // Additional metadata
-        code: target.outerHTML.substring(0, 1000),
-        rect: {
-          top: target.getBoundingClientRect().top,
-          left: target.getBoundingClientRect().left,
-          width: target.getBoundingClientRect().width,
-          height: target.getBoundingClientRect().height,
-        },
-      }, '*');
+      // Send element data using the helper
+      sendElementData(target, 'ELEMENT_SELECTED');
     };
 
     // Use capture phase to catch events early
@@ -549,7 +606,7 @@ export function Inspector() {
       document.removeEventListener("mouseout", handleMouseOut, true);
       document.removeEventListener("click", handleClick, true);
     };
-  }, [active, updateOverlay]);
+  }, [active, updateOverlay, sendElementData]);
 
   if (!active) return null;
 
