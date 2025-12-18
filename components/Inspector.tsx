@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
+import { getSourceFromDomId, preloadDomIdMap } from "@/lib/dom-id-map";
 
 // --- Types ---
 interface ElementSource {
@@ -32,19 +33,15 @@ interface InspectedElement {
   signature: ElementSignature;
 }
 
-// --- HELPER: Parse domId to extract fileName and lineNumber ---
+// --- HELPER: Extract line number from domId ---
 // domId format: "dom-{relativePath}:{line}:{column}-{counter}"
-// Example: "dom-app/page.tsx:5:10-1" -> { fileName: "app/page.tsx", lineNumber: 5 }
-function parseSourceFromDomId(domId: string): { fileName: string | null; lineNumber: number | null } {
-  // Match pattern: dom-{path}:{line}:{col}-{counter}
-  const match = domId.match(/^dom-(.+?):(\d+):(\d+)-\d+$/);
+function extractLineNumberFromDomId(domId: string): number | null {
+  // Example: "dom-app/page.tsx:5:10-1" -> 5
+  const match = domId.match(/^dom-.*?:(\\d+):\\d+-\\d+$/);
   if (match) {
-    return {
-      fileName: match[1],
-      lineNumber: parseInt(match[2], 10),
-    };
+    return parseInt(match[1], 10);
   }
-  return { fileName: null, lineNumber: null };
+  return null;
 }
 
 // --- HELPER: Extract source from domId (highest priority) ---
@@ -58,13 +55,12 @@ function getSourceFromDomIdAttribute(element: HTMLElement): ElementSource | null
     const domId = current.getAttribute('data-dom-id');
 
     if (domId) {
-      // Parse fileName and lineNumber directly from the domId
-      const { fileName, lineNumber } = parseSourceFromDomId(domId);
-      if (fileName) {
+      const mapping = getSourceFromDomId(domId);
+      if (mapping) {
         return {
-          fileName,
-          lineNumber,
-          jsxCode: current.outerHTML, // Use outerHTML as jsxCode for matching
+          fileName: mapping.fileName,
+          jsxCode: mapping.jsxCode || null,
+          lineNumber: extractLineNumberFromDomId(domId),
         };
       }
     }
@@ -100,7 +96,13 @@ function getSourceFromDataAttributes(element: HTMLElement): ElementSource | null
     }
     
     // Legacy data attributes
-   
+    const dataFile = current.getAttribute('data-file');
+    
+    if (dataFile) {
+      return {
+        fileName: dataFile,
+      };
+    }
     
     current = current.parentElement;
     depth++;
@@ -201,7 +203,7 @@ function getSourceFromStackTrace(): ElementSource | null {
     const error = new Error();
     if (!error.stack) return null;
     
-    const lines = error.stack.split('\n');
+    const lines = error.stack.split('\\n');
     const skipPatterns = [
       'node_modules/react',
       'node_modules/next',
@@ -216,9 +218,9 @@ function getSourceFromStackTrace(): ElementSource | null {
       
       // Match various stack trace formats
       const patterns = [
-        /at\s+.*?\s*\((.+?):(\d+):(\d+)\)/,
-        /(@|at\s+)(.+?):(\d+):(\d+)/,
-        /\((.+?):(\d+):(\d+)\)/,
+        /at\\s+.*?\\s*\\((.+?):(\\d+):(\\d+)\\)/,
+        /(@|at\\s+)(.+?):(\\d+):(\\d+)/,
+        /\\((.+?):(\\d+):(\\d+)\\)/,
       ];
       
       for (const pattern of patterns) {
@@ -263,7 +265,7 @@ function extractElementSignature(element: HTMLElement): ElementSignature {
   // Get text content (normalized)
   const textContent = (element.innerText || element.textContent || "")
     .trim()
-    .replace(/\s+/g, ' ')
+    .replace(/\\s+/g, ' ')
     .substring(0, 200); // Limit length
   
   // Get HTML
@@ -368,6 +370,10 @@ export function Inspector() {
   const selectedTargetRef = useRef<HTMLElement | null>(null);
   const hoverTargetRef = useRef<HTMLElement | null>(null);
 
+  // Preload domId mapping on mount
+  useEffect(() => {
+    preloadDomIdMap();
+  }, []);
 
   const updateOverlay = useCallback((
     overlay: HTMLDivElement | null, 
@@ -383,17 +389,16 @@ export function Inspector() {
     }
 
     const rect = target.getBoundingClientRect();
-    const padding = 4; // Add padding inside the outline
-    const top = rect.top + window.scrollY - padding;
-    const left = rect.left + window.scrollX - padding;
+    const top = rect.top + window.scrollY;
+    const left = rect.left + window.scrollX;
     
     // Move the blue box
     overlay.style.opacity = "1";
     overlay.style.transform = "scale(1)";
     overlay.style.top = `${top}px`;
     overlay.style.left = `${left}px`;
-    overlay.style.width = `${rect.width + (padding * 2)}px`;
-    overlay.style.height = `${rect.height + (padding * 2)}px`;
+    overlay.style.width = `${rect.width}px`;
+    overlay.style.height = `${rect.height}px`;
 
     // Update the Tag Name Label
     if (label) {
@@ -517,8 +522,10 @@ export function Inspector() {
           return;
         }
 
-        // Send refreshed element data
-        sendElementData(target, 'ELEMENT_REFRESHED');
+        // Re-fetch DOM ID map in case it was updated after hot reload
+        preloadDomIdMap().then(() => {
+          sendElementData(target, 'ELEMENT_REFRESHED');
+        });
       }
     };
     window.addEventListener("message", handleMessage);
@@ -676,15 +683,16 @@ export function Inspector() {
             position: "absolute",
             top: "-22px",
             left: "-2px",
-            background: "#3b82f6",
-            color: "white",
+            background: "#d1d5db",
+            color: "#000000",
             fontSize: "11px",
             fontFamily: "Inter",
             padding: "4px 6px",
             pointerEvents: "none",
             whiteSpace: "nowrap",
             marginBottom: "12px",
-            fontWeight: "400",
+            fontWeight: "500",
+            borderRadius: "6px",
             userSelect: "none",
           }}
         />
@@ -714,10 +722,11 @@ export function Inspector() {
             position: "absolute",
             top: "-26px",
             left: "-3px",
-            background: "#2563eb",
-            color: "white",
+            background: "#d1d5db",
+            color: "#000000",
             fontSize: "12px",
-            fontWeight: "400",
+            fontWeight: "500",
+            borderRadius: "6px",
             fontFamily: "Inter",
             padding: "3px 8px",
             pointerEvents: "none",
