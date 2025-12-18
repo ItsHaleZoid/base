@@ -10,6 +10,7 @@ export interface DomIdMapping {
 
 let domIdMap: Record<string, DomIdMapping> | null = null;
 let loadingPromise: Promise<void> | null = null;
+let isLoading = false;
 
 /**
  * Load the domId mapping from the generated JSON file
@@ -44,19 +45,46 @@ export function getSourceFromDomId(domId: string): DomIdMapping | null {
 }
 
 /**
+ * Async version that waits for loading to complete before returning
+ * Use this to avoid race conditions when map might still be loading
+ */
+export async function getSourceFromDomIdAsync(domId: string): Promise<DomIdMapping | null> {
+  // Wait for any in-progress loading to complete
+  if (isLoading && loadingPromise) {
+    await loadingPromise;
+  }
+
+  // If map is still empty, try loading it
+  if (!domIdMap || Object.keys(domIdMap).length === 0) {
+    await preloadDomIdMap();
+  }
+
+  const map = loadDomIdMap();
+  return map[domId] || null;
+}
+
+/**
  * Preload the mapping (useful for eager loading)
  */
 export async function preloadDomIdMap(): Promise<void> {
   if (typeof window === 'undefined') return;
+  if (isLoading) return loadingPromise || undefined;
 
-  try {
-    const response = await fetch('/api/dom-id-map');
-    if (response.ok) {
-      domIdMap = await response.json();
+  isLoading = true;
+  loadingPromise = (async () => {
+    try {
+      const response = await fetch('/api/dom-id-map');
+      if (response.ok) {
+        domIdMap = await response.json();
+      }
+    } catch (error) {
+      // Silently fail
+    } finally {
+      isLoading = false;
     }
-  } catch (error) {
-    // Silently fail
-  }
+  })();
+
+  return loadingPromise;
 }
 
 /**
@@ -66,16 +94,16 @@ export async function preloadDomIdMap(): Promise<void> {
 export async function refreshDomIdMap(): Promise<void> {
   if (typeof window === 'undefined') return;
 
-  // Clear the cache
-  domIdMap = null;
-
+  // Don't clear cache until we have new data (prevents race condition)
   try {
     // Add cache-busting param to avoid browser caching
     const response = await fetch(`/api/dom-id-map?t=${Date.now()}`);
     if (response.ok) {
-      domIdMap = await response.json();
+      const newMap = await response.json();
+      // Only update after we have the new data
+      domIdMap = newMap;
     }
   } catch (error) {
-    // Silently fail
+    // Silently fail - keep existing cache
   }
 }

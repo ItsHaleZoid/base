@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { getSourceFromDomId, preloadDomIdMap, refreshDomIdMap } from "@/lib/dom-id-map";
+import { getSourceFromDomId, getSourceFromDomIdAsync, preloadDomIdMap, refreshDomIdMap } from "@/lib/dom-id-map";
 
 // --- Types ---
 interface ElementSource {
@@ -57,6 +57,33 @@ function getSourceFromDomIdAttribute(element: HTMLElement): ElementSource | null
 
     if (domId) {
       const mapping = getSourceFromDomId(domId);
+      if (mapping) {
+        return {
+          fileName: mapping.fileName,
+          jsxCode: mapping.jsxCode || null,
+          lineNumber: extractLineNumberFromDomId(domId),
+        };
+      }
+    }
+
+    current = current.parentElement;
+    depth++;
+  }
+  return null;
+}
+
+// --- HELPER: Async version that waits for map to load ---
+async function getSourceFromDomIdAttributeAsync(element: HTMLElement): Promise<ElementSource | null> {
+  let current: HTMLElement | null = element;
+  let depth = 0;
+  const maxDepth = 10;
+
+  while (current && depth < maxDepth) {
+    const domId = current.getAttribute('data-dom-id');
+
+    if (domId) {
+      // Use async version to wait for map if still loading
+      const mapping = await getSourceFromDomIdAsync(domId);
       if (mapping) {
         return {
           fileName: mapping.fileName,
@@ -454,9 +481,11 @@ export function Inspector() {
     }
   }, []);
 
-  // Helper function to extract and send element data
-  const sendElementData = useCallback((target: HTMLElement, messageType: string) => {
-    const source = getReactSource(target);
+  // Helper function to extract and send element data (async to handle map loading race conditions)
+  const sendElementData = useCallback(async (target: HTMLElement, messageType: string) => {
+    // Try async first to ensure map is loaded, fall back to sync
+    const domIdSource = await getSourceFromDomIdAttributeAsync(target);
+    const source = domIdSource || getReactSource(target);
     const signature = extractElementSignature(target);
 
     // Get className safely
