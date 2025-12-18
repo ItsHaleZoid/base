@@ -37,8 +37,9 @@ interface InspectedElement {
 // domId format: "dom-{relativePath}:{line}:{column}-{counter}"
 function extractLineNumberFromDomId(domId: string): number | null {
   // Example: "dom-app/page.tsx:5:10-1" -> 5
-  const match = domId.match(/^dom-.*?:(\\d+):\\d+-\\d+$/);
-  if (match) {
+  // Match pattern: dom-{path}:{line}:{column}-{counter}
+  const match = domId.match(/^dom-[^:]+:(\d+):\d+-\d+$/);
+  if (match && match[1]) {
     return parseInt(match[1], 10);
   }
   return null;
