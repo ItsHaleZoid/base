@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { getSourceFromDomId, preloadDomIdMap } from "@/lib/dom-id-map";
+import { getSourceFromDomId, preloadDomIdMap, refreshDomIdMap } from "@/lib/dom-id-map";
 
 // --- Types ---
 interface ElementSource {
@@ -371,9 +371,43 @@ export function Inspector() {
   const selectedTargetRef = useRef<HTMLElement | null>(null);
   const hoverTargetRef = useRef<HTMLElement | null>(null);
 
-  // Preload domId mapping on mount
+  // Preload domId mapping on mount and refresh on HMR
   useEffect(() => {
     preloadDomIdMap();
+
+    // Listen for Next.js Fast Refresh / HMR events
+    // Next.js fires this custom event after hot updates complete
+    const handleHMR = () => {
+      console.log('[Inspector] HMR detected, refreshing dom-id-map...');
+      refreshDomIdMap();
+    };
+
+    // Next.js Fast Refresh event
+    if (typeof window !== 'undefined') {
+      window.addEventListener('next-route-announcer', handleHMR);
+
+      // Also listen for webpack HMR if available
+      if ((module as any).hot) {
+        (module as any).hot.accept();
+        (module as any).hot.addStatusHandler((status: string) => {
+          if (status === 'idle') {
+            // HMR update completed
+            handleHMR();
+          }
+        });
+      }
+
+      // Fallback: refresh when window regains focus (useful if HMR events don't fire)
+      const handleFocus = () => {
+        refreshDomIdMap();
+      };
+      window.addEventListener('focus', handleFocus);
+
+      return () => {
+        window.removeEventListener('next-route-announcer', handleHMR);
+        window.removeEventListener('focus', handleFocus);
+      };
+    }
   }, []);
 
   const updateOverlay = useCallback((

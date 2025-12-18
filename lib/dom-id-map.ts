@@ -48,9 +48,30 @@ export function getSourceFromDomId(domId: string): DomIdMapping | null {
  */
 export async function preloadDomIdMap(): Promise<void> {
   if (typeof window === 'undefined') return;
-  
+
   try {
     const response = await fetch('/api/dom-id-map');
+    if (response.ok) {
+      domIdMap = await response.json();
+    }
+  } catch (error) {
+    // Silently fail
+  }
+}
+
+/**
+ * Force refresh the mapping (clears cache and re-fetches)
+ * Call this after HMR updates to get the latest mappings
+ */
+export async function refreshDomIdMap(): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  // Clear the cache
+  domIdMap = null;
+
+  try {
+    // Add cache-busting param to avoid browser caching
+    const response = await fetch(`/api/dom-id-map?t=${Date.now()}`);
     if (response.ok) {
       domIdMap = await response.json();
     }
