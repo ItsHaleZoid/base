@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { getSourceFromDomId, preloadDomIdMap } from "@/lib/dom-id-map";
 
 // --- Types ---
 interface ElementSource {
@@ -33,15 +32,19 @@ interface InspectedElement {
   signature: ElementSignature;
 }
 
-// --- HELPER: Extract line number from domId ---
+// --- HELPER: Parse domId to extract fileName and lineNumber ---
 // domId format: "dom-{relativePath}:{line}:{column}-{counter}"
-function extractLineNumberFromDomId(domId: string): number | null {
-  // Example: "dom-app/page.tsx:5:10-1" -> 5
-  const match = domId.match(/^dom-.*?:(\d+):\d+-\d+$/);
+// Example: "dom-app/page.tsx:5:10-1" -> { fileName: "app/page.tsx", lineNumber: 5 }
+function parseSourceFromDomId(domId: string): { fileName: string | null; lineNumber: number | null } {
+  // Match pattern: dom-{path}:{line}:{col}-{counter}
+  const match = domId.match(/^dom-(.+?):(\d+):(\d+)-\d+$/);
   if (match) {
-    return parseInt(match[1], 10);
+    return {
+      fileName: match[1],
+      lineNumber: parseInt(match[2], 10),
+    };
   }
-  return null;
+  return { fileName: null, lineNumber: null };
 }
 
 // --- HELPER: Extract source from domId (highest priority) ---
@@ -55,12 +58,13 @@ function getSourceFromDomIdAttribute(element: HTMLElement): ElementSource | null
     const domId = current.getAttribute('data-dom-id');
 
     if (domId) {
-      const mapping = getSourceFromDomId(domId);
-      if (mapping) {
+      // Parse fileName and lineNumber directly from the domId
+      const { fileName, lineNumber } = parseSourceFromDomId(domId);
+      if (fileName) {
         return {
-          fileName: mapping.fileName,
-          jsxCode: mapping.jsxCode || null,
-          lineNumber: extractLineNumberFromDomId(domId),
+          fileName,
+          lineNumber,
+          jsxCode: current.outerHTML, // Use outerHTML as jsxCode for matching
         };
       }
     }
@@ -96,13 +100,7 @@ function getSourceFromDataAttributes(element: HTMLElement): ElementSource | null
     }
     
     // Legacy data attributes
-    const dataFile = current.getAttribute('data-file');
-    
-    if (dataFile) {
-      return {
-        fileName: dataFile,
-      };
-    }
+   
     
     current = current.parentElement;
     depth++;
@@ -370,10 +368,6 @@ export function Inspector() {
   const selectedTargetRef = useRef<HTMLElement | null>(null);
   const hoverTargetRef = useRef<HTMLElement | null>(null);
 
-  // Preload domId mapping on mount
-  useEffect(() => {
-    preloadDomIdMap();
-  }, []);
 
   const updateOverlay = useCallback((
     overlay: HTMLDivElement | null, 
@@ -483,8 +477,13 @@ export function Inspector() {
         const element = document.querySelector(`[data-dom-id="${domId}"]`) as HTMLElement;
 
         if (element) {
-          // Apply the CSS property directly for instant preview
-          (element.style as any)[property] = cssValue;
+          // Handle textContent as a special case
+          if (property === 'textContent') {
+            element.textContent = cssValue;
+          } else {
+            // Apply the CSS property directly for instant preview
+            (element.style as any)[property] = cssValue;
+          }
           console.log("[Inspector] ✅ Applied style:", { domId, property, cssValue });
 
           // Notify parent that style was applied
@@ -518,10 +517,8 @@ export function Inspector() {
           return;
         }
 
-        // Re-fetch DOM ID map in case it was updated after hot reload
-        preloadDomIdMap().then(() => {
-          sendElementData(target, 'ELEMENT_REFRESHED');
-        });
+        // Send refreshed element data
+        sendElementData(target, 'ELEMENT_REFRESHED');
       }
     };
     window.addEventListener("message", handleMessage);
@@ -563,6 +560,14 @@ export function Inspector() {
       document.body.style.cursor = "default";
       if (hoverOverlayRef.current) hoverOverlayRef.current.style.opacity = "0";
       if (selectedOverlayRef.current) selectedOverlayRef.current.style.opacity = "0";
+
+      // Clean up crosshair cursor from all elements
+      document.querySelectorAll('*').forEach((el) => {
+        const htmlEl = el as HTMLElement;
+        if (htmlEl.style.cursor === 'crosshair') {
+          htmlEl.style.cursor = '';
+        }
+      });
       return;
     }
 
