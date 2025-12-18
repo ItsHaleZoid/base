@@ -371,43 +371,49 @@ export function Inspector() {
   const selectedTargetRef = useRef<HTMLElement | null>(null);
   const hoverTargetRef = useRef<HTMLElement | null>(null);
 
-  // Preload domId mapping on mount and refresh on HMR
+  // Preload domId mapping on mount and refresh on HMR/file changes
   useEffect(() => {
     preloadDomIdMap();
 
-    // Listen for Next.js Fast Refresh / HMR events
-    // Next.js fires this custom event after hot updates complete
-    const handleHMR = () => {
-      console.log('[Inspector] HMR detected, refreshing dom-id-map...');
+    if (typeof window === 'undefined') return;
+
+    // Refresh when window regains focus (catches HMR updates when switching back from editor)
+    const handleFocus = () => {
+      console.log('[Inspector] Window focused, refreshing dom-id-map...');
       refreshDomIdMap();
     };
+    window.addEventListener('focus', handleFocus);
 
-    // Next.js Fast Refresh event
-    if (typeof window !== 'undefined') {
-      window.addEventListener('next-route-announcer', handleHMR);
-
-      // Also listen for webpack HMR if available
-      if ((module as any).hot) {
-        (module as any).hot.accept();
-        (module as any).hot.addStatusHandler((status: string) => {
-          if (status === 'idle') {
-            // HMR update completed
-            handleHMR();
-          }
-        });
-      }
-
-      // Fallback: refresh when window regains focus (useful if HMR events don't fire)
-      const handleFocus = () => {
+    // Listen for visibility changes (tab switching)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
         refreshDomIdMap();
-      };
-      window.addEventListener('focus', handleFocus);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
 
-      return () => {
-        window.removeEventListener('next-route-announcer', handleHMR);
-        window.removeEventListener('focus', handleFocus);
-      };
-    }
+    // Detect DOM mutations that might indicate HMR (new elements with data-dom-id)
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+          // Check if any new nodes have data-dom-id (indicates fresh render after HMR)
+          for (const node of mutation.addedNodes) {
+            if (node instanceof HTMLElement && node.querySelector('[data-dom-id]')) {
+              console.log('[Inspector] DOM change detected, refreshing dom-id-map...');
+              refreshDomIdMap();
+              return;
+            }
+          }
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      observer.disconnect();
+    };
   }, []);
 
   const updateOverlay = useCallback((
