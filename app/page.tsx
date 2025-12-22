@@ -5,7 +5,7 @@ export default function Home() {
      
       
       <div className="relative z-10 text-center">
-        <h1 className="text-[50px] font-light tracking-tight text-foreground/90">
+        <h1 className="text-[50px] font-light tracking-tight text-foreground/70">
           Welcome
         </h1>
         <p className="text-muted-foreground text-sm">
