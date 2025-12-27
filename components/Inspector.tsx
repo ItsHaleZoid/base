@@ -387,16 +387,45 @@ function getReactSource(element: HTMLElement): ElementSource {
 
 export function Inspector() {
   const [active, setActive] = useState(false);
-  
+
   // Direct DOM refs for 60fps performance
   const hoverOverlayRef = useRef<HTMLDivElement>(null);
   const hoverLabelRef = useRef<HTMLDivElement>(null);
-  
+
   const selectedOverlayRef = useRef<HTMLDivElement>(null);
   const selectedLabelRef = useRef<HTMLDivElement>(null);
-  
+
   const selectedTargetRef = useRef<HTMLElement | null>(null);
   const hoverTargetRef = useRef<HTMLElement | null>(null);
+
+  // Inject internal styles and set default theme on mount
+  useEffect(() => {
+    // Set light theme as default
+    try {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light');
+    } catch (_) {}
+
+    // Inject styles to hide Next.js dev indicators
+    const style = document.createElement('style');
+    style.id = 'inspector-internal-styles';
+    style.textContent = `
+      nextjs-portal,
+      [data-nextjs-toast],
+      div[class*="nextjs-toast-errors-parent"] {
+        display: none !important;
+      }
+      #vercel-toolbar,
+      [data-vercel-toolbar] {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      const el = document.getElementById('inspector-internal-styles');
+      if (el) el.remove();
+    };
+  }, []);
 
   // Preload domId mapping on mount and refresh on HMR/file changes
   useEffect(() => {

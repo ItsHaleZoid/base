@@ -120,16 +120,3 @@
     @apply bg-background text-foreground;
   }
 }
-
-/* Hides the bottom-right Next.js dev indicators */
-nextjs-portal,
-[data-nextjs-toast],
-div[class*="nextjs-toast-errors-parent"] {
-  display: none !important;
-}
-
-/* Hides the Vercel Toolbar specifically */
-#vercel-toolbar,
-[data-vercel-toolbar] {
-  display: none !important;
-}
