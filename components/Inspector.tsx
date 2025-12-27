@@ -579,6 +579,66 @@ export function Inspector() {
         }
       }
 
+      // Handle instant theme preview (inject CSS variables for immediate visual feedback)
+      if (event.data?.type === "APPLY_THEME_PREVIEW") {
+        const theme = event.data.theme;
+        if (!theme) return;
+
+        // Remove old preview style if exists
+        const oldStyle = document.getElementById('theme-preview-override');
+        if (oldStyle) oldStyle.remove();
+
+        // Inject new style that overrides all CSS variables
+        const style = document.createElement('style');
+        style.id = 'theme-preview-override';
+        style.textContent = `:root, .dark, .light {
+          --background: ${theme.background || ''} !important;
+          --foreground: ${theme.foreground || ''} !important;
+          --card: ${theme.card || ''} !important;
+          --card-foreground: ${theme.cardForeground || ''} !important;
+          --popover: ${theme.popover || ''} !important;
+          --popover-foreground: ${theme.popoverForeground || ''} !important;
+          --primary: ${theme.primary || ''} !important;
+          --primary-foreground: ${theme.primaryForeground || ''} !important;
+          --secondary: ${theme.secondary || ''} !important;
+          --secondary-foreground: ${theme.secondaryForeground || ''} !important;
+          --muted: ${theme.muted || ''} !important;
+          --muted-foreground: ${theme.mutedForeground || ''} !important;
+          --accent: ${theme.accent || ''} !important;
+          --accent-foreground: ${theme.accentForeground || ''} !important;
+          --destructive: ${theme.destructive || ''} !important;
+          --border: ${theme.border || ''} !important;
+          --input: ${theme.input || ''} !important;
+          --ring: ${theme.ring || ''} !important;
+          --chart-1: ${theme.chart1 || ''} !important;
+          --chart-2: ${theme.chart2 || ''} !important;
+          --chart-3: ${theme.chart3 || ''} !important;
+          --chart-4: ${theme.chart4 || ''} !important;
+          --chart-5: ${theme.chart5 || ''} !important;
+          --sidebar: ${theme.sidebar || ''} !important;
+          --sidebar-foreground: ${theme.sidebarForeground || ''} !important;
+          --sidebar-primary: ${theme.sidebarPrimary || ''} !important;
+          --sidebar-primary-foreground: ${theme.sidebarPrimaryForeground || ''} !important;
+          --sidebar-accent: ${theme.sidebarAccent || ''} !important;
+          --sidebar-accent-foreground: ${theme.sidebarAccentForeground || ''} !important;
+          --sidebar-border: ${theme.sidebarBorder || ''} !important;
+          --sidebar-ring: ${theme.sidebarRing || ''} !important;
+        }`;
+        document.head.appendChild(style);
+
+        // Notify parent that theme preview was applied
+        window.parent.postMessage({
+          type: 'THEME_PREVIEW_APPLIED',
+          themeName: event.data.themeName || 'custom'
+        }, '*');
+      }
+
+      // Handle clearing theme preview (when persisted theme is applied)
+      if (event.data?.type === "CLEAR_THEME_PREVIEW") {
+        const oldStyle = document.getElementById('theme-preview-override');
+        if (oldStyle) oldStyle.remove();
+      }
+
       // Handle refresh request from parent
       if (event.data?.type === "GET_SELECTED_ELEMENT") {
         const target = selectedTargetRef.current;
