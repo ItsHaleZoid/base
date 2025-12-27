@@ -582,11 +582,101 @@ export function Inspector() {
       // Handle instant theme preview (inject CSS variables for immediate visual feedback)
       if (event.data?.type === "APPLY_THEME_PREVIEW") {
         const theme = event.data.theme;
+        const themeName = event.data.themeName;
         if (!theme) return;
 
         // Remove old preview style if exists
         const oldStyle = document.getElementById('theme-preview-override');
         if (oldStyle) oldStyle.remove();
+
+        // Cartoonish theme special styles
+        const cartoonishStyles = themeName === 'cartoonish' ? `
+          button,
+          input,
+          textarea,
+          select,
+          [role="button"],
+          a,
+          .card,
+          [data-slot="card"],
+          [class*="card"],
+          [class*="button"],
+          [class*="input"],
+          [class*="select"],
+          [class*="dialog"],
+          [class*="popover"],
+          [class*="dropdown"],
+          [class*="menu"],
+          [class*="command"] {
+            border: 3px solid var(--foreground) !important;
+            box-shadow: 4px 4px 0px var(--foreground) !important;
+            transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+          }
+
+          button:hover,
+          [role="button"]:hover,
+          a:hover,
+          input:hover,
+          select:hover,
+          [class*="button"]:hover {
+            transform: translate(-2px, -2px) !important;
+            box-shadow: 6px 6px 0px var(--foreground) !important;
+          }
+
+          button:active,
+          [role="button"]:active,
+          a:active,
+          [class*="button"]:active {
+            transform: translate(2px, 2px) !important;
+            box-shadow: 2px 2px 0px var(--foreground) !important;
+          }
+
+          .card,
+          [data-slot="card"],
+          [class*="card"] {
+            box-shadow: 6px 6px 0px var(--foreground) !important;
+          }
+
+          input,
+          textarea {
+            border: 3px solid var(--foreground) !important;
+            box-shadow: inset 3px 3px 0px rgba(0, 0, 0, 0.1) !important;
+          }
+
+          input:focus,
+          textarea:focus {
+            box-shadow: inset 3px 3px 0px rgba(0, 0, 0, 0.15), 0 0 0 3px var(--primary) !important;
+            outline: 3px solid var(--foreground) !important;
+            outline-offset: 2px;
+          }
+
+          [class*="badge"],
+          [class*="tag"],
+          kbd {
+            border: 2px solid var(--foreground) !important;
+            box-shadow: 2px 2px 0px var(--foreground) !important;
+          }
+
+          [role="dialog"],
+          [class*="dialog"],
+          [class*="popover"],
+          [class*="dropdown"] > div {
+            border: 4px solid var(--foreground) !important;
+            box-shadow: 8px 8px 0px var(--foreground) !important;
+          }
+
+          button,
+          input,
+          textarea,
+          select,
+          .card,
+          [class*="card"],
+          [class*="button"],
+          [class*="dialog"],
+          [class*="popover"] {
+            border-radius: 12px !important;
+          }
+        ` : '';
 
         // Inject new style that overrides all CSS variables
         const style = document.createElement('style');
@@ -623,13 +713,14 @@ export function Inspector() {
           --sidebar-accent-foreground: ${theme.sidebarAccentForeground || ''} !important;
           --sidebar-border: ${theme.sidebarBorder || ''} !important;
           --sidebar-ring: ${theme.sidebarRing || ''} !important;
-        }`;
+        }
+        ${cartoonishStyles}`;
         document.head.appendChild(style);
 
         // Notify parent that theme preview was applied
         window.parent.postMessage({
           type: 'THEME_PREVIEW_APPLIED',
-          themeName: event.data.themeName || 'custom'
+          themeName: themeName || 'custom'
         }, '*');
       }
 
