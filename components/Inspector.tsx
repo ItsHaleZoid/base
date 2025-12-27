@@ -618,92 +618,132 @@ export function Inspector() {
         const oldStyle = document.getElementById('theme-preview-override');
         if (oldStyle) oldStyle.remove();
 
-        // Cartoonish theme special styles
+        // Cartoonish theme special styles (must match themes.py exactly)
         const cartoonishStyles = themeName === 'cartoonish' ? `
-          button,
-          input,
-          textarea,
-          select,
-          [role="button"],
-          a,
-          .card,
-          [data-slot="card"],
-          [class*="card"],
-          [class*="button"],
-          [class*="input"],
-          [class*="select"],
-          [class*="dialog"],
-          [class*="popover"],
-          [class*="dropdown"],
-          [class*="menu"],
-          [class*="command"] {
-            border: 3px solid var(--foreground) !important;
-            box-shadow: 4px 4px 0px var(--foreground) !important;
-            transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
-          }
+          @layer base {
+            button,
+            input,
+            textarea,
+            select,
+            [role="button"],
+            a,
+            .card,
+            [data-slot="card"],
+            [class*="card"],
+            [class*="button"],
+            [class*="input"],
+            [class*="select"],
+            [class*="dialog"],
+            [class*="popover"],
+            [class*="dropdown"],
+            [class*="menu"],
+            [class*="command"] {
+              border: 3px solid var(--foreground) !important;
+              box-shadow: 4px 4px 0px var(--foreground) !important;
+              transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+            }
 
-          button:hover,
-          [role="button"]:hover,
-          a:hover,
-          input:hover,
-          select:hover,
-          [class*="button"]:hover {
-            transform: translate(-2px, -2px) !important;
-            box-shadow: 6px 6px 0px var(--foreground) !important;
-          }
+            button:hover,
+            [role="button"]:hover,
+            a:hover,
+            input:hover,
+            select:hover,
+            [class*="button"]:hover {
+              transform: translate(-2px, -2px) !important;
+              box-shadow: 6px 6px 0px var(--foreground) !important;
+            }
 
-          button:active,
-          [role="button"]:active,
-          a:active,
-          [class*="button"]:active {
-            transform: translate(2px, 2px) !important;
-            box-shadow: 2px 2px 0px var(--foreground) !important;
-          }
+            button:active,
+            [role="button"]:active,
+            a:active,
+            [class*="button"]:active {
+              transform: translate(2px, 2px) !important;
+              box-shadow: 2px 2px 0px var(--foreground) !important;
+            }
 
-          .card,
-          [data-slot="card"],
-          [class*="card"] {
-            box-shadow: 6px 6px 0px var(--foreground) !important;
-          }
+            .card,
+            [data-slot="card"],
+            [class*="card"] {
+              box-shadow: 6px 6px 0px var(--foreground) !important;
+            }
 
-          input,
-          textarea {
-            border: 3px solid var(--foreground) !important;
-            box-shadow: inset 3px 3px 0px rgba(0, 0, 0, 0.1) !important;
-          }
+            [class*="sidebar"] button,
+            [class*="sidebar"] a {
+              border: 2px solid var(--sidebar-foreground) !important;
+              box-shadow: 3px 3px 0px var(--sidebar-foreground) !important;
+            }
 
-          input:focus,
-          textarea:focus {
-            box-shadow: inset 3px 3px 0px rgba(0, 0, 0, 0.15), 0 0 0 3px var(--primary) !important;
-            outline: 3px solid var(--foreground) !important;
-            outline-offset: 2px;
-          }
+            [class*="sidebar"] button:hover,
+            [class*="sidebar"] a:hover {
+              transform: translate(-1px, -1px) !important;
+              box-shadow: 4px 4px 0px var(--sidebar-foreground) !important;
+            }
 
-          [class*="badge"],
-          [class*="tag"],
-          kbd {
-            border: 2px solid var(--foreground) !important;
-            box-shadow: 2px 2px 0px var(--foreground) !important;
-          }
+            input,
+            textarea {
+              border: 3px solid var(--foreground) !important;
+              box-shadow: inset 3px 3px 0px rgba(0, 0, 0, 0.1) !important;
+            }
 
-          [role="dialog"],
-          [class*="dialog"],
-          [class*="popover"],
-          [class*="dropdown"] > div {
-            border: 4px solid var(--foreground) !important;
-            box-shadow: 8px 8px 0px var(--foreground) !important;
-          }
+            input:focus,
+            textarea:focus {
+              box-shadow: inset 3px 3px 0px rgba(0, 0, 0, 0.15), 0 0 0 3px var(--primary) !important;
+              outline: 3px solid var(--foreground) !important;
+              outline-offset: 2px;
+            }
 
-          button,
-          input,
-          textarea,
-          select,
-          .card,
-          [class*="card"],
-          [class*="button"],
-          [class*="dialog"],
-          [class*="popover"] {
-            border-radius: 12px !important;
+            [class*="badge"],
+            [class*="tag"],
+            kbd {
+              border: 2px solid var(--foreground) !important;
+              box-shadow: 2px 2px 0px var(--foreground) !important;
+            }
+
+            [role="dialog"],
+            [class*="dialog"],
+            [class*="popover"],
+            [class*="dropdown"] > div {
+              border: 4px solid var(--foreground) !important;
+              box-shadow: 8px 8px 0px var(--foreground) !important;
+            }
+
+            ::-webkit-scrollbar {
+              width: 14px;
+              height: 14px;
+            }
+
+            ::-webkit-scrollbar-track {
+              background: var(--muted);
+              border: 2px solid var(--foreground);
+            }
+
+            ::-webkit-scrollbar-thumb {
+              background: var(--primary);
+              border: 2px solid var(--foreground);
+              border-radius: 0;
+            }
+
+            ::-webkit-scrollbar-thumb:hover {
+              background: var(--accent);
+              box-shadow: inset 0 0 0 2px var(--foreground);
+            }
+
+            *:focus-visible {
+              outline: 3px solid var(--primary) !important;
+              outline-offset: 2px !important;
+            }
+
+            button,
+            input,
+            textarea,
+            select,
+            .card,
+            [class*="card"],
+            [class*="button"],
+            [class*="dialog"],
+            [class*="popover"] {
+              border-radius: 12px !important;
+            }
           }
         ` : '';
 
